@@ -89,7 +89,7 @@
 
       {#if info.model}
         <h3 class="section-title">Parts</h3>
-        <table>
+        <table class="parts">
           <tbody>
             {#each info.model.geometries as g, i}
               <tr>
@@ -154,6 +154,9 @@
   table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
   td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   td:last-child { padding-right: 0; }
+  .parts td:nth-child(1) { width: 96px; }
+  .parts td:nth-child(2) { width: 72px; }
+  .parts td:nth-child(4) { width: 56px; }
   .clips { display: flex; flex-direction: column; }
   .clip { display: flex; align-items: center; gap: 8px; height: 28px; font-size: 12px; border-radius: 4px; }
   .clip.on { background: var(--accent-soft); }

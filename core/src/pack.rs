@@ -49,6 +49,9 @@ pub struct Replace {
     pub name: String,
     /// Path inside the project folder.
     pub file: String,
+    /// Hash of the file as Minediver wrote it. A build skips the entry while the file still matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,6 +78,10 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
         let copies: Vec<&Asset> = ar.assets.iter().filter(|a| a.type_hash == th && a.name_hash == nh && a.patch.is_none()).collect();
         let first = copies.first().with_context(|| format!("{} {} is not in the game", r.ty, r.name))?;
         let src = std::fs::read(project_dir.join(&r.file)).with_context(|| format!("read {}", r.file))?;
+        if r.start.as_deref() == Some(hash::hex(hash::murmur64(&src)).as_str()) {
+            notes.push(format!("{} is unchanged, left out", r.file));
+            continue;
+        }
         let (orig, _) = ar.read_variant(first, 0)?;
         let bytes = match r.ty.as_str() {
             "unit" => {
@@ -377,7 +384,8 @@ pub fn start(ex: &crate::export::Exporter, assets: &[&Asset], dir: &Path, id: &s
     };
     let add = |p: &mut Project, ty: &str, name: String, file: String| {
         if !p.replace.iter().any(|r| r.ty == ty && r.name == name) {
-            p.replace.push(Replace { ty: ty.into(), name, file });
+            let start = std::fs::read(dir.join(&file)).ok().map(|b| hash::hex(hash::murmur64(&b)));
+            p.replace.push(Replace { ty: ty.into(), name, file, start });
         }
     };
     for a in assets {
@@ -410,4 +418,19 @@ pub fn start(ex: &crate::export::Exporter, assets: &[&Asset], dir: &Path, id: &s
     }
     std::fs::write(dir.join("mod.json"), serde_json::to_string_pretty(&p)? + "\n")?;
     Ok(p)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_png_becomes_a_dds_the_decoder_reads_back_the_same() {
+        let (w, h) = (8u32, 4u32);
+        let px: Vec<u8> = (0..w * h * 4).map(|i| (i * 37 % 251) as u8).collect();
+        let png = crate::texture::encode_png(w, h, &px).unwrap();
+        let dds = super::png_to_dds(&png).unwrap();
+        let info = crate::texture::info(&dds).unwrap();
+        assert_eq!((info.width, info.height, info.mips), (8, 4, 4));
+        let (_, _, back) = crate::texture::decode_rgba(&dds).unwrap();
+        assert_eq!(back, px);
+    }
 }
