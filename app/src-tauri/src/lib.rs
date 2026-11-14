@@ -257,6 +257,8 @@ fn extract(app: AppHandle, state: State<App>, ids: Vec<u32>, out: String, option
     if options.ffmpeg.is_none() {
         options.ffmpeg = state.settings.lock().unwrap().ffmpeg.clone().map(PathBuf::from);
     }
+    let mut seen = std::collections::HashSet::new();
+    let ids: Vec<u32> = ids.into_iter().filter(|&i| l.ar.assets.get(i as usize).is_some_and(|a| seen.insert((a.type_hash, a.name_hash)))).collect();
     let total = ids.len();
     std::thread::spawn(move || {
         let ex = Exporter::new(&l.ar, &names, &l.linker);

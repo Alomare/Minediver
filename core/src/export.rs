@@ -291,6 +291,11 @@ impl<'a> Exporter<'a> {
                         written.push(raw);
                     }
                 }
+                Kind::Text if ty == "strings" => {
+                    let p = with_ext(&base, ".txt");
+                    write(&p, strings_to_text(&data)?.as_bytes())?;
+                    written.push(p);
+                }
                 _ if !o.raw => {
                     let ext = match ty.as_str() {
                         "lua" => "luac".to_string(),
@@ -310,4 +315,22 @@ impl<'a> Exporter<'a> {
         }
         Ok(written)
     }
+}
+
+/// A `strings` resource as text, one `<key hash>\t<text>` line per entry (newlines written as `\n`).
+/// Layout: u32 header, u32 count, (u32 key, u32 offset) per entry, then null-terminated UTF-8.
+pub fn strings_to_text(d: &[u8]) -> Result<String> {
+    let word = |at: usize| -> Result<u32> { Ok(u32::from_le_bytes(d.get(at..at + 4).context("strings table is cut short")?.try_into().unwrap())) };
+    let count = word(4)? as usize;
+    anyhow::ensure!(8 + count * 8 <= d.len(), "strings table runs past the end");
+    let mut out = String::new();
+    for i in 0..count {
+        let key = word(8 + i * 8)?;
+        let off = word(12 + i * 8)? as usize;
+        anyhow::ensure!(off < d.len(), "string offset past the end");
+        let end = d[off..].iter().position(|&b| b == 0).map_or(d.len(), |p| off + p);
+        let text = String::from_utf8_lossy(&d[off..end]).replace('\r', "").replace('\n', "\n");
+        out.push_str(&format!("{key:08x}\t{text}\n"));
+    }
+    Ok(out)
 }

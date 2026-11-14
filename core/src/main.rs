@@ -143,7 +143,9 @@ fn main() -> Result<()> {
         }
         Cmd::Extract { pick, out, texture, audio, video, model, raw, all_variants, ffmpeg } => {
             let f = Filter::new(&pick.query()?)?;
-            let picked: Vec<_> = ar.assets.iter().filter(|a| f.matches(&names, a)).collect();
+            let mut seen = std::collections::HashSet::new();
+            // One copy of each resource: the same name in several bundles would write the same file.
+            let picked: Vec<_> = ar.assets.iter().filter(|a| f.matches(&names, a) && seen.insert((a.type_hash, a.name_hash))).collect();
             let linker = minediver::links::Linker::new(&ar);
             let ex = Exporter::new(&ar, &names, &linker);
             let o = Options { texture, audio, video, model, raw, all_variants, ffmpeg, ..Default::default() };
