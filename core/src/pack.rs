@@ -313,9 +313,10 @@ fn rebuild_geometry(orig: &Geometry, prims: &[Prim], notes: &mut Vec<String>, gi
         let extra = orig.batches.iter().find(|b| b.material as usize == *slot).map_or(0, |b| b.extra);
         batches.push(unit::Batch { material: *slot as u32, start: start_tri, triangles: tris, extra });
     }
-    ensure!(count <= 65535, "geometry {gi} has {count} vertices; the game format takes at most 65,535 per geometry");
+    let wide = orig.index_count > 0 && orig.indices.len() / orig.index_count as usize == 4;
+    ensure!(wide || count <= 65535, "geometry {gi} has {count} vertices; this part takes at most 65,535 (split it, or add it to a bigger part)");
     ensure!(verts.len() == count as usize * orig.stride as usize, "vertex layout mismatch");
-    let indices: Vec<u8> = idx.iter().flat_map(|&i| (i as u16).to_le_bytes()).collect();
+    let indices: Vec<u8> = if wide { idx.iter().flat_map(|i| i.to_le_bytes()).collect() } else { idx.iter().flat_map(|&i| (i as u16).to_le_bytes()).collect() };
     Ok(Geometry {
         vertices: verts,
         vertex_count: count,

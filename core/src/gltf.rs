@@ -103,7 +103,7 @@ pub fn channel(g: &Geometry, semantic: u32, set: u32) -> Option<(Vec<f32>, usize
 }
 
 fn to_y_up(v: &mut [f32]) {
-    for p in v.chunks_mut(3) {
+    for p in v.chunks_exact_mut(3) {
         let (y, z) = (p[1], p[2]);
         p[1] = z;
         p[2] = -y;
@@ -127,7 +127,7 @@ pub fn unit_to_glb(u: &Unit, name: &str, images: &[Image], maps: &MaterialMaps) 
     let mut meshes = Vec::new();
     let mut nodes = Vec::new();
     for (gi, g) in u.geometries.iter().enumerate() {
-        let Some((mut pos, _)) = channel(g, 0, 0) else { continue };
+        let Some((mut pos, 3)) = channel(g, 0, 0) else { continue };
         to_y_up(&mut pos);
         let mut attrs = serde_json::Map::new();
         attrs.insert("POSITION".into(), json!(b.floats(&pos, 3, true)));

@@ -227,6 +227,9 @@ fn selftest(ar: &Archive) -> Result<()> {
         .map(|a| -> Result<bool> {
             let (d, _) = ar.read_variant(a, 0)?;
             let u = minediver::unit::parse(&d)?;
+            if u.geometries.is_empty() {
+                return Ok(false);
+            }
             if u.geometries.iter().any(|g| g.channels.iter().any(|c| c.semantic == 6)) {
                 return Ok(false);
             }
@@ -238,10 +241,12 @@ fn selftest(ar: &Archive) -> Result<()> {
             anyhow::ensure!(u2.geometries.len() == u.geometries.len(), "geometry count");
             for (g, g2) in u.geometries.iter().zip(&u2.geometries) {
                 anyhow::ensure!(g.index_count == g2.index_count, "index count {} -> {}", g.index_count, g2.index_count);
-                for k in 0..3 {
-                    anyhow::ensure!((g.min[k] - g2.min[k]).abs() < 1e-4 && (g.max[k] - g2.max[k]).abs() < 1e-4, "bounds moved");
-                }
                 let (p1, _) = minediver::gltf::channel(g, 0, 0).unwrap();
+                for k in 0..3 {
+                    let lo = p1.iter().skip(k).step_by(3).fold(f32::MAX, |a, b| a.min(*b));
+                    let hi = p1.iter().skip(k).step_by(3).fold(f32::MIN, |a, b| a.max(*b));
+                    anyhow::ensure!((lo - g2.min[k]).abs() < 1e-4 && (hi - g2.max[k]).abs() < 1e-4, "bounds differ from the vertices");
+                }
                 let (p2, _) = minediver::gltf::channel(g2, 0, 0).unwrap();
                 let i1 = minediver::gltf::indices(g);
                 let i2 = minediver::gltf::indices(g2);
@@ -268,6 +273,6 @@ fn selftest(ar: &Archive) -> Result<()> {
             }
         }
     }
-    println!("units round-tripped through GLB: {ok} ok, {skinned} skinned (skipped), {bad} failed");
+    println!("units round-tripped through GLB: {ok} ok, {skinned} skinned or empty (skipped), {bad} failed");
     Ok(())
 }

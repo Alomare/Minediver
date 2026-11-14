@@ -221,10 +221,41 @@ pub fn read(bytes: &[u8]) -> Result<Vec<Mesh>> {
                     }
                 }
             }
+            compact(&mut prim);
             prims.push(prim);
         }
         out.push(Mesh { name, prims });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+/// Keeps only the vertices the indices use, in first-use order. Primitives that share one vertex list
+/// (as Minediver writes them) come back the size they were.
+fn compact(p: &mut Prim) {
+    let n = p.positions.len();
+    let mut map = vec![u32::MAX; n];
+    let mut order = Vec::new();
+    for i in p.indices.iter_mut() {
+        let v = *i as usize;
+        if v >= n {
+            continue;
+        }
+        if map[v] == u32::MAX {
+            map[v] = order.len() as u32;
+            order.push(v);
+        }
+        *i = map[v];
+    }
+    if order.len() == n && order.iter().enumerate().all(|(a, b)| a == *b) {
+        return;
+    }
+    fn pick<T: Copy>(v: &[T], order: &[usize], n: usize) -> Vec<T> {
+        if v.len() == n { order.iter().map(|&i| v[i]).collect() } else { v.to_vec() }
+    }
+    p.positions = pick(&p.positions, &order, n);
+    p.normals = pick(&p.normals, &order, n);
+    p.tangents = pick(&p.tangents, &order, n);
+    p.colors = pick(&p.colors, &order, n);
+    p.uvs = p.uvs.iter().map(|u| pick(u, &order, n)).collect();
 }

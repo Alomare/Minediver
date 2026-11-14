@@ -91,7 +91,8 @@
 
 <style>
   .view { position: relative; width: 100%; height: 100%; }
-  .view :global(canvas) { display: block; }
+  .view :global(canvas) { display: block; width: 100% !important; height: 100% !important; }
+  .view { overflow: hidden; }
   .status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); }
   .wire { position: absolute; right: 6px; bottom: 6px; height: 24px; font-size: 12px; background: var(--panel); border-color: var(--line); }
   .wire.on { border-color: var(--accent); }

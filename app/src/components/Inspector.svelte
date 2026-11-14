@@ -133,7 +133,7 @@
 </aside>
 
 <style>
-  .insp { grid-area: insp; overflow: hidden auto; background: var(--bg); border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+  .insp { grid-area: insp; overflow: hidden auto; scrollbar-gutter: stable; background: var(--bg); border-left: 1px solid var(--line); display: flex; flex-direction: column; }
   .hint { color: var(--faint); text-align: center; margin: 40px 16px; }
   .preview {
     flex: none; height: 260px; display: grid; place-items: center; border-bottom: 1px solid var(--line);
