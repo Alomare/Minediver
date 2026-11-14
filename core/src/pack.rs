@@ -364,3 +364,49 @@ pub fn rebuild_unit(orig: &[u8], meshes: &[glb_read::Mesh], notes: &mut Vec<Stri
     out.extend_from_slice(&orig[u.rest_at..]);
     Ok(out)
 }
+
+/// Starts a mod project in `dir` from game resources: each model as GLB (with the textures it uses as
+/// PNG), each texture as PNG, all listed in `mod.json` so a build replaces them. Edited files keep
+/// their names; anything left untouched can be dropped from `replace`.
+pub fn start(ex: &crate::export::Exporter, assets: &[&Asset], dir: &Path, id: &str, name: &str) -> Result<Project> {
+    std::fs::create_dir_all(dir)?;
+    let mut p = match std::fs::read_to_string(dir.join("mod.json")) {
+        Ok(t) => serde_json::from_str(&t)?,
+        Err(_) => Project { id: id.into(), name: name.into(), version: default_version(), authors: vec![], description: String::new(), replace: vec![] },
+    };
+    let add = |p: &mut Project, ty: &str, name: String, file: String| {
+        if !p.replace.iter().any(|r| r.ty == ty && r.name == name) {
+            p.replace.push(Replace { ty: ty.into(), name, file });
+        }
+    };
+    for a in assets {
+        let shown = crate::export::display_name(ex.names, a);
+        let leaf = shown.rsplit('/').next().unwrap_or(&shown).to_string();
+        match crate::export::kind_of(a.type_hash) {
+            crate::export::Kind::Model => {
+                let (glb, t) = ex.model_glb(a, true)?;
+                std::fs::write(dir.join(format!("{leaf}.glb")), glb)?;
+                add(&mut p, "unit", shown.clone(), format!("{leaf}.glb"));
+                for (slot, param, tex) in &t.list {
+                    let Some(ta) = ex.ar.find(hash::hash("texture"), *tex) else { continue };
+                    let (td, _) = ex.ar.read_variant(ta, 0)?;
+                    let tname = crate::export::display_name(ex.names, ta);
+                    let file = format!("textures/{leaf}_{slot}_{param}.png");
+                    std::fs::create_dir_all(dir.join("textures"))?;
+                    std::fs::write(dir.join(&file), crate::texture::to_png(&td)?)?;
+                    add(&mut p, "texture", tname, file);
+                }
+            }
+            crate::export::Kind::Texture => {
+                let (td, _) = ex.ar.read_variant(a, 0)?;
+                let file = format!("textures/{leaf}.png");
+                std::fs::create_dir_all(dir.join("textures"))?;
+                std::fs::write(dir.join(&file), crate::texture::to_png(&td)?)?;
+                add(&mut p, "texture", shown, file);
+            }
+            _ => bail!("only models and textures can start a mod project for now"),
+        }
+    }
+    std::fs::write(dir.join("mod.json"), serde_json::to_string_pretty(&p)? + "\n")?;
+    Ok(p)
+}

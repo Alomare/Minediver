@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Minediver",
+  "version": "0.1.0",
+  "identifier": "com.alomare.minediver",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1430",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Minediver",
+        "width": 1360,
+        "height": 840,
+        "minWidth": 900,
+        "minHeight": 560,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost md: http://md.localhost; img-src 'self' data: blob: md: http://md.localhost; media-src 'self' blob: md: http://md.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; worker-src 'self' blob:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "appimage", "deb"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.png"],
+    "shortDescription": "Helldivers (2015) asset extractor and mod builder",
+    "windows": { "nsis": { "installMode": "currentUser" } }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCMUE1MkJBRTZCRkU1QkYKUldTLzViL211bElhcTVlWG1QWlJ1SmV3d2djMmkwYm9UMlJWSkFRYk1tSHRYSEFnUlZZZkVDVEsK",
+      "endpoints": ["https://github.com/Alomare/Minediver/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  }
+}

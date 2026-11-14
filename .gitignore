@@ -2,4 +2,4 @@
 /internal/
 node_modules/
 /app/dist/
-
+/app/src-tauri/gen/
