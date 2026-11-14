@@ -55,7 +55,7 @@ Repacking covers models without bones (weapons, props, vehicle parts that don't 
 2. Edit the files. Keep the file names. In Blender, edit the `geometry_N` objects and export with File, Export, glTF 2.0 (`.glb`), over the same file. A new part should be joined into one of the existing `geometry_N` objects, and should use one of the existing materials.
 3. Open the Mod builder, pick the project folder and press **Build mod**. The result in `build/<mod id>` is an Obsidian mod folder: import it in Obsidian, deploy, and start the game.
 
-What the builder does: a model's parts are rebuilt from the GLB in the game's own vertex layout, with everything else in the unit (nodes, physics, scripts) kept as it was. A PNG becomes an uncompressed DDS with all mip levels. A `.dds` or `.unit` file in the project is used as it is. Remove a line from the list to leave that file alone.
+What the builder does: a model's parts are rebuilt from the GLB in the game's own vertex layout, with everything else in the unit (nodes, physics, scripts) kept as it was. A PNG becomes a DDS in the same compressed format as the game texture it replaces, with all mip levels. A `.dds` or `.unit` file in the project is used as it is. Remove a line from the list to leave that file alone.
 
 Limits for now: models with bones (characters, enemies) can be extracted but not repacked, a part can hold at most 65,535 vertices, and replacing a model changes every copy of that model in the game. Adding a brand new weapon next to the old ones needs game scripts as well, which is Obsidian mod work outside Minediver.
 
