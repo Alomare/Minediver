@@ -12,6 +12,13 @@ pub struct Prim {
     pub uvs: Vec<Vec<[f32; 2]>>,
     pub colors: Vec<[f32; 4]>,
     pub indices: Vec<u32>,
+    /// Skinned: four joints and weights per vertex, and the name of each joint of the skin.
+    pub joints: Vec<[u16; 4]>,
+    pub weights: Vec<[f32; 4]>,
+    pub joint_names: Vec<String>,
+    /// Skinned: positions, normals and tangents stay as the file has them (bind space), and this is each
+    /// joint's world matrix times its inverse bind matrix, in glTF axes.
+    pub joint_binds: Vec<M4>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,7 +108,7 @@ impl Doc<'_> {
     }
 }
 
-type M4 = [f32; 16];
+pub type M4 = [f32; 16];
 const IDENT: M4 = [1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.];
 
 fn mul(a: &M4, b: &M4) -> M4 {
@@ -172,14 +179,45 @@ pub fn read(bytes: &[u8]) -> Result<Vec<Mesh>> {
     let mut out = Vec::new();
     let scene = doc.json["scene"].as_u64().unwrap_or(0) as usize;
     let roots: Vec<usize> = doc.json["scenes"][scene]["nodes"].as_array().map(|a| a.iter().filter_map(|x| x.as_u64().map(|x| x as usize)).collect()).unwrap_or_else(|| (0..doc.json["nodes"].as_array().map_or(0, |a| a.len())).collect());
+    let count = doc.json["nodes"].as_array().map_or(0, |a| a.len());
+    let mut worlds = vec![IDENT; count];
+    let mut order = Vec::new();
     let mut stack: Vec<(usize, M4)> = roots.into_iter().map(|r| (r, IDENT)).collect();
     while let Some((ni, parent)) = stack.pop() {
+        if ni >= count {
+            continue;
+        }
         let n = &doc.json["nodes"][ni];
         let m = mul(&parent, &node_matrix(n));
+        worlds[ni] = m;
+        order.push(ni);
         if let Some(kids) = n["children"].as_array() {
             stack.extend(kids.iter().filter_map(|k| k.as_u64()).map(|k| (k as usize, m)));
         }
+    }
+    for ni in order {
+        let n = &doc.json["nodes"][ni];
+        let mut m = worlds[ni];
         let Some(mi) = n["mesh"].as_u64() else { continue };
+        let mut joint_names = Vec::new();
+        let mut joint_binds = Vec::new();
+        if let Some(si) = n["skin"].as_u64() {
+            // A skinned mesh keeps its vertices in bind space; each vertex is placed later through its own
+            // joint (the rebuilder knows the game bone of each joint).
+            let skin = &doc.json["skins"][si as usize];
+            let joints: Vec<usize> = skin["joints"].as_array().into_iter().flatten().filter_map(|j| j.as_u64().map(|j| j as usize)).collect();
+            joint_names = joints.iter().map(|&j| doc.json["nodes"][j]["name"].as_str().unwrap_or("").to_string()).collect();
+            let ib = match skin["inverseBindMatrices"].as_u64() {
+                Some(i) => doc.floats(i as usize)?.0,
+                None => IDENT.repeat(joints.len()),
+            };
+            joint_binds = joints.iter().enumerate().map(|(k, &j)| {
+                let inv: M4 = ib.get(k * 16..k * 16 + 16).map_or(IDENT, |s| s.try_into().unwrap());
+                mul(&worlds.get(j).copied().unwrap_or(IDENT), &inv)
+            }).collect();
+            m = IDENT;
+        }
+        let skinned_node = !joint_binds.is_empty();
         let mesh = &doc.json["meshes"][mi as usize];
         let name = n["name"].as_str().or(mesh["name"].as_str()).unwrap_or("mesh").to_string();
         let mut prims = Vec::new();
@@ -191,12 +229,13 @@ pub fn read(bytes: &[u8]) -> Result<Vec<Mesh>> {
             let Some(pi) = at["POSITION"].as_u64() else { continue };
             let (pos, _) = doc.floats(pi as usize)?;
             let mut prim = Prim::default();
-            prim.positions = pos.chunks(3).map(|c| to_z_up(apply(&m, [c[0], c[1], c[2]], 1.0))).collect();
+            let axes = |p: [f32; 3]| if skinned_node { p } else { to_z_up(p) };
+            prim.positions = pos.chunks(3).map(|c| axes(apply(&m, [c[0], c[1], c[2]], 1.0))).collect();
             if let Some(i) = at["NORMAL"].as_u64() {
-                prim.normals = doc.floats(i as usize)?.0.chunks(3).map(|c| norm(to_z_up(apply(&m, [c[0], c[1], c[2]], 0.0)))).collect();
+                prim.normals = doc.floats(i as usize)?.0.chunks(3).map(|c| norm(axes(apply(&m, [c[0], c[1], c[2]], 0.0)))).collect();
             }
             if let Some(i) = at["TANGENT"].as_u64() {
-                prim.tangents = doc.floats(i as usize)?.0.chunks(4).map(|c| { let t = norm(to_z_up(apply(&m, [c[0], c[1], c[2]], 0.0))); [t[0], t[1], t[2], c[3]] }).collect();
+                prim.tangents = doc.floats(i as usize)?.0.chunks(4).map(|c| { let t = norm(axes(apply(&m, [c[0], c[1], c[2]], 0.0))); [t[0], t[1], t[2], c[3]] }).collect();
             }
             for set in 0..4 {
                 if let Some(i) = at[format!("TEXCOORD_{set}")].as_u64() {
@@ -211,6 +250,12 @@ pub fn read(bytes: &[u8]) -> Result<Vec<Mesh>> {
                 Some(i) => doc.uints(i as usize)?,
                 None => (0..prim.positions.len() as u32).collect(),
             };
+            if let (Some(ji), Some(wi)) = (at["JOINTS_0"].as_u64(), at["WEIGHTS_0"].as_u64()) {
+                prim.joints = doc.floats(ji as usize)?.0.chunks(4).map(|c| [c[0] as u16, c[1] as u16, c[2] as u16, c[3] as u16]).collect();
+                prim.weights = doc.floats(wi as usize)?.0.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect();
+                prim.joint_names = joint_names.clone();
+                prim.joint_binds = joint_binds.clone();
+            }
             prim.material = p["material"].as_u64().and_then(|mi| doc.json["materials"][mi as usize]["name"].as_str()).unwrap_or("").to_string();
             // A mirrored node flips winding.
             let det = m[0] * (m[5] * m[10] - m[9] * m[6]) - m[4] * (m[1] * m[10] - m[9] * m[2]) + m[8] * (m[1] * m[6] - m[5] * m[2]);
@@ -257,5 +302,7 @@ fn compact(p: &mut Prim) {
     p.normals = pick(&p.normals, &order, n);
     p.tangents = pick(&p.tangents, &order, n);
     p.colors = pick(&p.colors, &order, n);
+    p.joints = pick(&p.joints, &order, n);
+    p.weights = pick(&p.weights, &order, n);
     p.uvs = p.uvs.iter().map(|u| pick(u, &order, n)).collect();
 }

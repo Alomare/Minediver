@@ -86,7 +86,12 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
         let bytes = match r.ty.as_str() {
             "unit" => {
                 let ext = Path::new(&r.file).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                if ext == "unit" { src } else { rebuild_unit(&orig, &glb_read::read(&src)?, &mut notes)? }
+                if ext == "unit" {
+                    src
+                } else {
+                    let bone_names = ar.find(hash::hash("bones"), nh).and_then(|b| ar.read_variant(b, 0).ok()).map(|(bd, _)| unit::bone_names(&bd)).unwrap_or_default();
+                    rebuild_unit(&orig, &glb_read::read(&src)?, &bone_names, &mut notes)?
+                }
             }
             "texture" => {
                 let ext = Path::new(&r.file).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
@@ -297,60 +302,167 @@ fn slot_of(name: &str, slots: &[String]) -> Option<usize> {
     slots.iter().position(|s| s == name || s == base)
 }
 
-/// The geometry rebuilt from new primitives, in the original vertex layout.
-fn rebuild_geometry(orig: &Geometry, prims: &[Prim], notes: &mut Vec<String>, gi: usize) -> Result<Geometry> {
-    if orig.channels.iter().any(|c| c.semantic == 6 || c.semantic == 7) {
-        bail!("geometry {gi} is skinned; repacking skinned meshes is not supported yet");
+/// What a skinned geometry needs to write its blend channels: its skin, and the skin bone of each
+/// joint name.
+struct SkinCtx<'a> {
+    skin: &'a unit::Skin,
+    bone_of: HashMap<String, Vec<usize>>,
+}
+
+/// Blend indices and weights of one vertex, in the bone set of its batch. Joints outside the set are
+/// dropped (counted in `dropped`) and the rest weigh 1 together.
+fn blend(p: &Prim, v: usize, ctx: &SkinCtx, set: &[u32], comps: usize, dropped: &mut usize) -> ([f32; 4], [f32; 4]) {
+    let mut infl: Vec<(f32, f32)> = Vec::new();
+    if let (Some(j), Some(w)) = (p.joints.get(v), p.weights.get(v)) {
+        for k in 0..4 {
+            if w[k] <= 0.0 {
+                continue;
+            }
+            let bones = p.joint_names.get(j[k] as usize).and_then(|n| ctx.bone_of.get(n));
+            match bones.and_then(|bs| bs.iter().find_map(|b| set.iter().position(|&s| s as usize == *b))) {
+                Some(local) => infl.push((local as f32, w[k])),
+                None => *dropped += 1,
+            }
+        }
     }
+    infl.sort_by(|a, b| b.1.total_cmp(&a.1));
+    infl.truncate(comps.clamp(1, 4));
+    let sum: f32 = infl.iter().map(|i| i.1).sum();
+    let (mut bi, mut bw) = ([0f32; 4], [0f32; 4]);
+    if sum <= 1e-6 {
+        bw[0] = 1.0;
+    } else {
+        for (k, (b, w)) in infl.iter().enumerate() {
+            bi[k] = *b;
+            bw[k] = w / sum;
+        }
+    }
+    (bi, bw)
+}
+
+/// The geometry rebuilt from new primitives, in the original vertex layout. A skinned geometry gets one
+/// batch per (slot, bone set): each triangle goes to the first set of the skin that holds every bone
+/// it uses (or the one that holds most of them), and a vertex shared by two sets is written twice,
+/// since blend indices count within a set.
+fn rebuild_geometry(orig: &Geometry, prims: &[Prim], notes: &mut Vec<String>, gi: usize, ctx: Option<&SkinCtx>) -> Result<Geometry> {
+    let skinned = orig.channels.iter().any(|c| c.semantic == 6 || c.semantic == 7);
+    if skinned && ctx.is_none() {
+        bail!("geometry {gi} is skinned and the skeleton of the unit was not found");
+    }
+    if skinned && prims.iter().any(|p| p.joints.len() != p.positions.len()) {
+        bail!("geometry {gi} is skinned: keep the armature and export the mesh with skinning (JOINTS_0 and WEIGHTS_0)");
+    }
+    let comps_of = |s: u32| orig.channels.iter().find(|c| c.semantic == s).and_then(|c| unit::format_size(c.format)).map_or(1, |b| b as usize / 4);
+    let blend_comps = comps_of(6).min(comps_of(7));
     let tsem = tangent_semantic(orig);
-    // Group primitives by slot so each slot is one batch.
-    let mut by_slot: Vec<(usize, Vec<&Prim>)> = Vec::new();
+    let mut dropped = 0usize;
+
+    // Per primitive: slot, and the frame of every vertex.
+    struct Frame {
+        normals: Vec<[f32; 3]>,
+        tangents: Vec<[f32; 3]>,
+        bitangents: Vec<[f32; 3]>,
+        uv0: Vec<[f32; 2]>,
+    }
+    let mut slots = Vec::new();
+    let mut frames = Vec::new();
     for p in prims {
         let s = slot_of(&p.material, &orig.materials).unwrap_or_else(|| {
             notes.push(format!("geometry {gi}: material '{}' matches no slot, used '{}'", p.material, orig.materials.first().cloned().unwrap_or_default()));
             0
         });
-        match by_slot.iter_mut().find(|(x, _)| *x == s) {
-            Some((_, v)) => v.push(p),
-            None => by_slot.push((s, vec![p])),
+        slots.push(s);
+        let n = p.positions.len();
+        let normals: Vec<[f32; 3]> = if p.normals.len() == n { p.normals.clone() } else { vec![[0., 0., 1.]; n] };
+        let uv0 = p.uvs.first().filter(|u| u.len() == n).cloned().unwrap_or_else(|| vec![[0., 0.]; n]);
+        let (raw, signs): (Vec<[f32; 3]>, Vec<f32>) = if p.tangents.len() == n {
+            (p.tangents.iter().map(|t| [t[0], t[1], t[2]]).collect(), p.tangents.iter().map(|t| if t[3] < 0.0 { -1.0 } else { 1.0 }).collect())
+        } else {
+            (uv_tangents(&p.positions, &uv0, &p.indices), vec![1.0; n])
+        };
+        let mut tangents = Vec::with_capacity(n);
+        let mut bitangents = Vec::with_capacity(n);
+        for v in 0..n {
+            let nrm = normals[v];
+            // Keep the tangent at right angles to the normal.
+            let d = dot(nrm, raw[v]);
+            let t = normalize(sub(raw[v], [nrm[0] * d, nrm[1] * d, nrm[2] * d]));
+            tangents.push(t);
+            bitangents.push(cross(nrm, t).map(|x| x * signs[v]));
+        }
+        frames.push(Frame { normals, tangents, bitangents, uv0 });
+    }
+
+    // The skin bones a vertex leans on.
+    let bones_of = |p: &Prim, v: usize| -> Vec<usize> {
+        let (Some(c), Some(j), Some(w)) = (ctx, p.joints.get(v), p.weights.get(v)) else { return Vec::new() };
+        (0..4).filter(|&k| w[k] > 0.0).filter_map(|k| p.joint_names.get(j[k] as usize).and_then(|n| c.bone_of.get(n)).and_then(|bs| bs.first()).copied()).collect()
+    };
+    let pick_set = |need: &[usize]| -> usize {
+        let Some(c) = ctx else { return 0 };
+        let holds = |s: &Vec<u32>| need.iter().filter(|b| s.iter().any(|x| *x as usize == **b)).count();
+        c.skin.sets.iter().position(|s| holds(s) == need.len()).unwrap_or_else(|| {
+            (0..c.skin.sets.len()).max_by_key(|&i| holds(&c.skin.sets[i])).unwrap_or(0)
+        })
+    };
+
+    // Triangles by (slot, set), in slot order then set order.
+    let mut groups: std::collections::BTreeMap<(usize, usize), Vec<(usize, [u32; 3])>> = Default::default();
+    for (pi, p) in prims.iter().enumerate() {
+        for t in p.indices.chunks_exact(3) {
+            if t.iter().any(|&v| v as usize >= p.positions.len()) {
+                continue;
+            }
+            let set = if skinned {
+                let mut need: Vec<usize> = t.iter().flat_map(|&v| bones_of(p, v as usize)).collect();
+                need.sort_unstable();
+                need.dedup();
+                pick_set(&need)
+            } else {
+                0
+            };
+            groups.entry((slots[pi], set)).or_default().push((pi, [t[0], t[1], t[2]]));
         }
     }
-    by_slot.sort_by_key(|(s, _)| *s);
+
     let mut verts: Vec<u8> = Vec::new();
     let mut idx: Vec<u32> = Vec::new();
     let mut batches = Vec::new();
     let (mut min, mut max, mut radius) = ([f32::MAX; 3], [f32::MIN; 3], 0f32);
     let mut count = 0u32;
-    for (slot, list) in &by_slot {
+    for ((slot, set), tris) in &groups {
         let start_tri = idx.len() as u32 / 3;
-        for p in list {
-            let n = p.positions.len();
-            let normals: Vec<[f32; 3]> = if p.normals.len() == n { p.normals.clone() } else { vec![[0., 0., 1.]; n] };
-            let uv0 = p.uvs.first().filter(|u| u.len() == n).cloned().unwrap_or_else(|| vec![[0., 0.]; n]);
-            let (tangents, signs): (Vec<[f32; 3]>, Vec<f32>) = if p.tangents.len() == n {
-                (p.tangents.iter().map(|t| [t[0], t[1], t[2]]).collect(), p.tangents.iter().map(|t| if t[3] < 0.0 { -1.0 } else { 1.0 }).collect())
-            } else {
-                (uv_tangents(&p.positions, &uv0, &p.indices), vec![1.0; n])
-            };
-            for v in 0..n {
-                let pos = p.positions[v];
+        let set_bones: &[u32] = ctx.and_then(|c| c.skin.sets.get(*set)).map_or(&[], |s| s.as_slice());
+        let mut placed: HashMap<(usize, u32), u32> = HashMap::new();
+        for (pi, t) in tris {
+            for &v in t {
+                if let Some(&at) = placed.get(&(*pi, v)) {
+                    idx.push(at);
+                    continue;
+                }
+                let p = &prims[*pi];
+                let f = &frames[*pi];
+                let vu = v as usize;
+                let pos = p.positions[vu];
                 for k in 0..3 {
                     min[k] = min[k].min(pos[k]);
                     max[k] = max[k].max(pos[k]);
                 }
                 radius = radius.max(dot(pos, pos).sqrt());
-                let nrm = normals[v];
-                // Keep the tangent at right angles to the normal.
-                let t = normalize(sub(tangents[v], [nrm[0] * dot(nrm, tangents[v]), nrm[1] * dot(nrm, tangents[v]), nrm[2] * dot(nrm, tangents[v])]));
-                let bi = cross(nrm, t).map(|x| x * signs[v]);
+                let (bidx, bwt) = match ctx {
+                    Some(c) if skinned => blend(p, vu, c, set_bones, blend_comps, &mut dropped),
+                    _ => ([0.0; 4], [1.0, 0.0, 0.0, 0.0]),
+                };
                 for c in &orig.channels {
-                    let vals: Vec<f32> = match (c.semantic, c.format) {
-                        (0, _) => pos.to_vec(),
-                        (1, _) => nrm.to_vec(),
-                        (s, _) if s == tsem => t.to_vec(),
-                        (2 | 3, _) => bi.to_vec(),
-                        (4, _) => p.uvs.get(c.set as usize).filter(|u| u.len() == n).map_or(uv0[v], |u| u[v]).to_vec(),
-                        (5, _) => p.colors.get(v).copied().unwrap_or([1., 1., 1., 1.]).to_vec(),
+                    let vals: Vec<f32> = match c.semantic {
+                        0 => pos.to_vec(),
+                        1 => f.normals[vu].to_vec(),
+                        s if s == tsem => f.tangents[vu].to_vec(),
+                        2 | 3 => f.bitangents[vu].to_vec(),
+                        4 => p.uvs.get(c.set as usize).filter(|u| u.len() == p.positions.len()).map_or(f.uv0[vu], |u| u[vu]).to_vec(),
+                        5 => p.colors.get(vu).copied().unwrap_or([1., 1., 1., 1.]).to_vec(),
+                        6 => bidx.to_vec(),
+                        7 => bwt.to_vec(),
                         _ => vec![],
                     };
                     let size = unit::format_size(c.format).context("unknown channel format")? as usize / 4;
@@ -358,13 +470,17 @@ fn rebuild_geometry(orig: &Geometry, prims: &[Prim], notes: &mut Vec<String>, gi
                         verts.extend(vals.get(k).copied().unwrap_or(0.0).to_le_bytes());
                     }
                 }
+                placed.insert((*pi, v), count);
+                idx.push(count);
+                count += 1;
             }
-            idx.extend(p.indices.iter().map(|i| i + count));
-            count += n as u32;
         }
-        let tris = idx.len() as u32 / 3 - start_tri;
-        let extra = orig.batches.iter().find(|b| b.material as usize == *slot).map_or(0, |b| b.extra);
-        batches.push(unit::Batch { material: *slot as u32, start: start_tri, triangles: tris, extra });
+        let tri_count = idx.len() as u32 / 3 - start_tri;
+        let extra = if skinned { *set as u32 } else { orig.batches.iter().find(|b| b.material as usize == *slot).map_or(0, |b| b.extra) };
+        batches.push(unit::Batch { material: *slot as u32, start: start_tri, triangles: tri_count, extra });
+    }
+    if dropped > 0 {
+        notes.push(format!("geometry {gi}: {dropped} bone weights pointed at bones this part cannot use and were left out"));
     }
     let wide = orig.index_count > 0 && orig.indices.len() / orig.index_count as usize == 4;
     ensure!(wide || count <= 65535, "geometry {gi} has {count} vertices; this part takes at most 65,535 (split it, or add it to a bigger part)");
@@ -390,9 +506,39 @@ fn rebuild_geometry(orig: &Geometry, prims: &[Prim], notes: &mut Vec<String>, gi
 /// The unit with geometries replaced from a GLB. Meshes named `geometry_N` replace geometry N; other
 /// meshes join geometry 0. Geometries the GLB leaves out stay as they were. Everything after the
 /// geometry section (nodes, physics, flow) is kept byte for byte.
-pub fn rebuild_unit(orig: &[u8], meshes: &[glb_read::Mesh], notes: &mut Vec<String>) -> Result<Vec<u8>> {
+pub fn rebuild_unit(orig: &[u8], meshes: &[glb_read::Mesh], bone_names: &HashMap<u32, String>, notes: &mut Vec<String>) -> Result<Vec<u8>> {
     let u = unit::parse(orig)?;
     ensure!(!u.geometries.is_empty(), "the unit has no geometry to replace");
+    let (skins, skins_end) = unit::skins(orig, u.rest_at)?;
+    let hashes: Vec<u32> = bone_names.keys().copied().collect();
+    let graph = if skins.is_empty() { None } else { unit::find_graph(orig, skins_end, &skins, &hashes) };
+    // Joint names as Minediver exports them: the bone name, or node_<index> without one.
+    let ctxs: Vec<SkinCtx> = match &graph {
+        Some(nodes) => skins
+            .iter()
+            .map(|skin| {
+                let mut bone_of = HashMap::new();
+                for (i, n) in nodes.iter().enumerate() {
+                    let label = bone_names.get(&n.name).cloned().unwrap_or_else(|| format!("node_{i}"));
+                    for (b, _) in skin.nodes.iter().enumerate().filter(|(_, s)| **s as usize == i) {
+                        bone_of.entry(label.clone()).or_insert_with(Vec::new).push(b);
+                    }
+                }
+                SkinCtx { skin, bone_of }
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut skin_k = 0usize;
+    let mut ctx_of: Vec<Option<usize>> = Vec::new();
+    for g in &u.geometries {
+        if g.channels.iter().any(|c| c.semantic == 6) {
+            ctx_of.push((skin_k < ctxs.len()).then_some(skin_k));
+            skin_k += 1;
+        } else {
+            ctx_of.push(None);
+        }
+    }
     let mut assigned: HashMap<usize, Vec<Prim>> = HashMap::new();
     for m in meshes {
         let gi = m.name.strip_prefix("geometry_").and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()).and_then(|n| n.parse::<usize>().ok()).filter(|&n| n < u.geometries.len());
@@ -405,7 +551,14 @@ pub fn rebuild_unit(orig: &[u8], meshes: &[glb_read::Mesh], notes: &mut Vec<Stri
     let mut geoms = Vec::new();
     for (gi, g) in u.geometries.iter().enumerate() {
         match assigned.get(&gi) {
-            Some(p) => geoms.push(rebuild_geometry(g, p, notes, gi)?),
+            Some(p) => {
+                let ctx = ctx_of[gi].map(|k| &ctxs[k]);
+                let mut p = p.clone();
+                if let (Some(c), Some(nodes)) = (ctx, &graph) {
+                    into_part_space(&mut p, c, nodes);
+                }
+                geoms.push(rebuild_geometry(g, &p, notes, gi, ctx)?)
+            }
             None => geoms.push(g.clone()),
         }
     }
@@ -499,5 +652,69 @@ mod tests {
         assert!(err / (px.len() as u64) < 12, "mean error {}", err as f64 / px.len() as f64);
         // 16x8 BC3 with mips 8x4, 4x2, 2x1, 1x1: 128 + 32 + 16 + 16 + 16 bytes after the header.
         assert_eq!(dds.len(), 128 + 128 + 32 + 16 + 16 + 16);
+    }
+}
+
+type M4 = [f32; 16];
+
+fn mul4(a: &M4, b: &M4) -> M4 {
+    let mut o = [0f32; 16];
+    for c in 0..4 {
+        for r in 0..4 {
+            o[c * 4 + r] = (0..4).map(|k| a[k * 4 + r] * b[c * 4 + k]).sum();
+        }
+    }
+    o
+}
+
+/// Inverse of an affine column-major 4x4.
+fn invert_affine(m: &M4) -> Option<M4> {
+    let (a, b, c) = ([m[0], m[1], m[2]], [m[4], m[5], m[6]], [m[8], m[9], m[10]]);
+    let det = dot(a, cross(b, c));
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    // Rows of the inverse 3x3 are the cross products of the columns, over the determinant.
+    let r0 = cross(b, c).map(|x| x / det);
+    let r1 = cross(c, a).map(|x| x / det);
+    let r2 = cross(a, b).map(|x| x / det);
+    let t = [m[12], m[13], m[14]];
+    let it = [-dot(r0, t), -dot(r1, t), -dot(r2, t)];
+    Some([r0[0], r1[0], r2[0], 0.0, r0[1], r1[1], r2[1], 0.0, r0[2], r1[2], r2[2], 0.0, it[0], it[1], it[2], 1.0])
+}
+
+fn apply4(m: &M4, p: [f32; 3], w: f32) -> [f32; 3] {
+    [0, 1, 2].map(|r| m[r] * p[0] + m[4 + r] * p[1] + m[8 + r] * p[2] + m[12 + r] * w)
+}
+
+/// Moves a skinned part from the bind space of the GLB into the space the game keeps the part in. A
+/// vertex goes through its strongest joint: out by that joint's bind transform in the file, into glTF to
+/// game axes, back by the bind transform of the same bone in the game. For a file Minediver wrote this
+/// changes nothing; for one Blender wrote it holds while the rest pose is the one exported.
+fn into_part_space(prims: &mut [Prim], ctx: &SkinCtx, nodes: &[unit::Node]) {
+    const TO_GAME: M4 = [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+    for p in prims {
+        let mut cache: HashMap<usize, Option<M4>> = HashMap::new();
+        let mut to_part = |k: usize| -> Option<M4> {
+            *cache.entry(k).or_insert_with(|| {
+                let bone = *p.joint_names.get(k).and_then(|n| ctx.bone_of.get(n))?.first()?;
+                let node = nodes.get(*ctx.skin.nodes.get(bone)? as usize)?;
+                let game = invert_affine(&mul4(&node.world, ctx.skin.inverse_bind.get(bone)?))?;
+                Some(mul4(&game, &mul4(&TO_GAME, p.joint_binds.get(k)?)))
+            })
+        };
+        for v in 0..p.positions.len() {
+            let (Some(j), Some(w)) = (p.joints.get(v), p.weights.get(v)) else { continue };
+            let k = (0..4).max_by(|a, b| w[*a].total_cmp(&w[*b])).unwrap_or(0);
+            let Some(m) = to_part(j[k] as usize) else { continue };
+            p.positions[v] = apply4(&m, p.positions[v], 1.0);
+            if let Some(n) = p.normals.get_mut(v) {
+                *n = normalize(apply4(&m, *n, 0.0));
+            }
+            if let Some(t) = p.tangents.get_mut(v) {
+                let d = normalize(apply4(&m, [t[0], t[1], t[2]], 0.0));
+                *t = [d[0], d[1], d[2], t[3]];
+            }
+        }
     }
 }
