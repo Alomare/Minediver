@@ -10,4 +10,5 @@
 - New: details for each model: parts, vertex counts, material slots and the textures each slot uses.
 - New: name lists: load, save, and check guessed names against the game.
 - New: mod builder (experimental): edited models, with or without bones, and edited textures become an Obsidian mod folder. Textures keep the compression of the game texture they replace.
+- New: mod projects can add new models and textures under new names next to the game's, instead of replacing them.
 - New: command line tool, `minediver-cli`, for listing, extracting and building mods.
