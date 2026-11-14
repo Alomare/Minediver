@@ -383,14 +383,14 @@ fn try_names(state: State<App>, text: String) -> Res<Vec<String>> {
 }
 
 #[tauri::command]
-async fn mod_start(app: AppHandle, ids: Vec<u32>, dir: String, id: String, name: String) -> Res<Value> {
+async fn mod_start(app: AppHandle, ids: Vec<u32>, dir: String, id: String, name: String, new_prefix: Option<String>) -> Res<Value> {
     let state = app.state::<App>();
     let l = loaded(&state)?;
     let names = state.names.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let ex = Exporter::new(&l.ar, &names, &l.linker);
         let assets: Vec<&archive::Asset> = ids.iter().filter_map(|&i| l.ar.assets.get(i as usize)).collect();
-        minediver::pack::start(&ex, &assets, std::path::Path::new(&dir), &id, &name).map(|p| json!(p)).map_err(|e| format!("{e:#}"))
+        minediver::pack::start(&ex, &assets, std::path::Path::new(&dir), &id, &name, new_prefix.as_deref()).map(|p| json!(p)).map_err(|e| format!("{e:#}"))
     })
     .await
     .map_err(err)?

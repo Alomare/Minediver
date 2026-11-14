@@ -57,7 +57,17 @@ Repacking covers models, with or without bones, and textures.
 
 What the builder does: a model's parts are rebuilt from the GLB in the game's own vertex layout, with everything else in the unit (nodes, physics, scripts) kept as it was. A PNG becomes a DDS in the same compressed format as the game texture it replaces, with all mip levels. A `.dds` or `.unit` file in the project is used as it is. Remove a line from the list to leave that file alone.
 
-Models with bones (characters, enemies) export with their skeleton and skin weights, so they come into Blender rigged and in the pose the game binds them in. Limits for now: a skinned part keeps the bone sets of the game (a triangle can use only bones one of its sets holds; weights on other bones are left out, and the builder says how many), a part can hold at most 65,535 vertices, and replacing a model changes every copy of that model in the game. Adding a brand new weapon next to the old ones needs game scripts as well, which is Obsidian mod work outside Minediver.
+Models with bones (characters, enemies) export with their skeleton and skin weights, so they come into Blender rigged and in the pose the game binds them in. Limits for now: a skinned part keeps the bone sets of the game (a triangle can use only bones one of its sets holds; weights on other bones are left out, and the builder says how many), a part can hold at most 65,535 vertices (more where the game part already uses 32-bit indices), and replacing a model changes every copy of that model in the game.
+
+### A new model next to the game's
+
+Tick **Add as new resources and keep the game's** when starting the project (or pass `--new-prefix mymod/` to `minediver-cli start`). Each entry then gets a new name and a `base`, the game resource it comes from:
+
+```json
+{ "type": "unit", "name": "mymod/rifle_long", "file": "rifle_long.glb", "base": "equipment/wep_assaultrifle_01" }
+```
+
+The build adds the new unit to the bundles of the base, with a copy of the base material under the new name. Edited textures that name a base become new textures too, and the copied material points at them; textures left untouched stay the game's. The game's own rifle does not change. Where the new model shows up (a new weapon, a pickup) is up to game scripts, which is Obsidian mod work: `World.spawn_unit(world, "mymod/rifle_long", position)` places it.
 
 ## Names
 

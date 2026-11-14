@@ -52,6 +52,28 @@ pub struct Replace {
     /// Hash of the file as Minediver wrote it. A build skips the entry while the file still matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start: Option<String>,
+    /// Set for a new resource: the game resource it is made from. `name` is then the new name, the
+    /// resource goes into the bundles of the base, and a new unit gets a copy of the base material under
+    /// its own name, pointing at the new textures of the project that name their base.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+}
+
+/// Every 8-byte run of `from` in `data` (at any offset) becomes `to`. Returns how many.
+fn swap_hash(data: &mut [u8], from: u64, to: u64) -> usize {
+    let (f, t) = (from.to_le_bytes(), to.to_le_bytes());
+    let mut n = 0;
+    let mut i = 0;
+    while i + 8 <= data.len() {
+        if data[i..i + 8] == f {
+            data[i..i + 8].copy_from_slice(&t);
+            n += 1;
+            i += 8;
+        } else {
+            i += 1;
+        }
+    }
+    n
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -72,13 +94,23 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
     std::fs::create_dir_all(out.join("res"))?;
     let mut resources = Vec::new();
     let mut notes = Vec::new();
+    // New textures by the hash of their base, for the materials of new units.
+    let changed = |r: &Replace| -> bool {
+        let now = std::fs::read(project_dir.join(&r.file)).ok().map(|b| hash::hex(hash::murmur64(&b)));
+        r.start.is_none() || now != r.start
+    };
+    // Only new textures that were edited: an untouched one is left out and the material keeps the game's.
+    let retarget: HashMap<u64, u64> = p.replace.iter().filter(|r| r.ty == "texture" && changed(r)).filter_map(|r| r.base.as_ref().map(|b| (parse_name(b), parse_name(&r.name)))).collect();
     for (i, r) in p.replace.iter().enumerate() {
         let th = hash::hash(&r.ty);
         let nh = parse_name(&r.name);
-        let copies: Vec<&Asset> = ar.assets.iter().filter(|a| a.type_hash == th && a.name_hash == nh && a.patch.is_none()).collect();
-        let first = copies.first().with_context(|| format!("{} {} is not in the game", r.ty, r.name))?;
+        let base_h = r.base.as_deref().map(parse_name).unwrap_or(nh);
+        let copies: Vec<&Asset> = ar.assets.iter().filter(|a| a.type_hash == th && a.name_hash == base_h && a.patch.is_none()).collect();
+        let first = copies.first().with_context(|| format!("{} {} is not in the game", r.ty, r.base.as_deref().unwrap_or(&r.name)))?;
         let src = std::fs::read(project_dir.join(&r.file)).with_context(|| format!("read {}", r.file))?;
-        if r.start.as_deref() == Some(hash::hex(hash::murmur64(&src)).as_str()) {
+        // A new unit is always built (it is the point of the entry); anything else unchanged is left out.
+        let new_unit = r.base.is_some() && r.ty == "unit";
+        if !new_unit && r.start.as_deref() == Some(hash::hex(hash::murmur64(&src)).as_str()) {
             notes.push(format!("{} is unchanged, left out", r.file));
             continue;
         }
@@ -89,7 +121,7 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
                 if ext == "unit" {
                     src
                 } else {
-                    let bone_names = ar.find(hash::hash("bones"), nh).and_then(|b| ar.read_variant(b, 0).ok()).map(|(bd, _)| unit::bone_names(&bd)).unwrap_or_default();
+                    let bone_names = ar.find(hash::hash("bones"), base_h).and_then(|b| ar.read_variant(b, 0).ok()).map(|(bd, _)| unit::bone_names(&bd)).unwrap_or_default();
                     rebuild_unit(&orig, &glb_read::read(&src)?, &bone_names, &mut notes)?
                 }
             }
@@ -106,10 +138,41 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
         if copies.iter().any(|a| a.variants.len() > 1) {
             notes.push(format!("{} has language variants; the new file replaces all of them", r.name));
         }
+        let mut bytes = bytes;
+        if r.base.is_some() && r.ty == "unit" {
+            // The unit names its material by its own name: point it at the copy made below.
+            let u = unit::parse(&bytes)?;
+            let n = swap_hash(&mut bytes[u.rest_at..], base_h, nh);
+            let mat_th = hash::hash("material");
+            let mat = ar.assets.iter().find(|a| a.type_hash == mat_th && a.name_hash == base_h && a.patch.is_none());
+            match mat {
+                Some(m) => {
+                    let (mut md, _) = ar.read_variant(m, 0)?;
+                    let linker = crate::links::Linker::new(ar);
+                    for st in crate::links::material_textures(&linker, &md) {
+                        if let Some(&new) = retarget.get(&st.texture) {
+                            swap_hash(&mut md, st.texture, new);
+                        }
+                    }
+                    let mleaf = format!("res/{i:03}_{}.material", r.name.rsplit('/').next().unwrap_or("x"));
+                    std::fs::write(out.join(&mleaf), &md)?;
+                    let mut mb: Vec<u64> = copies.iter().map(|a| a.bundle).collect();
+                    mb.sort_unstable();
+                    mb.dedup();
+                    for b in mb {
+                        resources.push(json!({ "type": "material", "name": r.name, "bundle": format!("{b:016x}"), "data": mleaf }));
+                    }
+                }
+                None => notes.push(format!("{}: the base unit has no material of its own name; the new unit uses the base material", r.name)),
+            }
+            if n == 0 {
+                notes.push(format!("{}: the base unit does not name its material; the new unit draws with the base material", r.name));
+            }
+        }
         let leaf = format!("res/{i:03}_{}.{}", r.name.rsplit('/').next().unwrap_or("x").trim_start_matches('#'), r.ty);
         std::fs::write(out.join(&leaf), &bytes)?;
         let ty_field = if ["lua", "texture", "material", "font", "timpani_bank", "bik"].contains(&r.ty.as_str()) { r.ty.clone() } else { format!("#{th:016x}") };
-        let name_field = names.get(nh).unwrap_or_else(|| format!("#{nh:016x}"));
+        let name_field = if r.base.is_some() { r.name.clone() } else { names.get(nh).unwrap_or_else(|| format!("#{nh:016x}")) };
         let mut bundles: Vec<u64> = copies.iter().map(|a| a.bundle).collect();
         bundles.sort_unstable();
         bundles.dedup();
@@ -584,16 +647,25 @@ pub fn rebuild_unit(orig: &[u8], meshes: &[glb_read::Mesh], bone_names: &HashMap
 /// Starts a mod project in `dir` from game resources: each model as GLB (with the textures it uses as
 /// PNG), each texture as PNG, all listed in `mod.json` so a build replaces them. Edited files keep
 /// their names; anything left untouched can be dropped from `replace`.
-pub fn start(ex: &crate::export::Exporter, assets: &[&Asset], dir: &Path, id: &str, name: &str) -> Result<Project> {
+/// With `new_prefix`, the project adds new resources instead (named `<prefix><file name>`, each with the
+/// game resource it comes from as `base`), so the game keeps the originals.
+pub fn start(ex: &crate::export::Exporter, assets: &[&Asset], dir: &Path, id: &str, name: &str, new_prefix: Option<&str>) -> Result<Project> {
     std::fs::create_dir_all(dir)?;
     let mut p = match std::fs::read_to_string(dir.join("mod.json")) {
         Ok(t) => serde_json::from_str(&t)?,
         Err(_) => Project { id: id.into(), name: name.into(), version: default_version(), authors: vec![], description: String::new(), replace: vec![] },
     };
     let add = |p: &mut Project, ty: &str, name: String, file: String| {
+        let (name, base) = match new_prefix {
+            Some(prefix) => {
+                let stem = Path::new(&file).file_stem().and_then(|s| s.to_str()).unwrap_or("new").to_string();
+                (format!("{prefix}{stem}"), Some(name))
+            }
+            None => (name, None),
+        };
         if !p.replace.iter().any(|r| r.ty == ty && r.name == name) {
             let start = std::fs::read(dir.join(&file)).ok().map(|b| hash::hex(hash::murmur64(&b)));
-            p.replace.push(Replace { ty: ty.into(), name, file, start });
+            p.replace.push(Replace { ty: ty.into(), name, file, start, base });
         }
     };
     for a in assets {

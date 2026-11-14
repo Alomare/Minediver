@@ -15,6 +15,8 @@
   app.modSeed = [];
   let newId = $state("me.my_mod");
   let newName = $state("My mod");
+  let asNew = $state(false);
+  let prefix = $state("mymod/");
 
   async function load(d) {
     dir = d;
@@ -38,7 +40,7 @@
   async function start() {
     busy = true;
     try {
-      project = await call("mod_start", { ids: seed, dir, id: newId, name: newName });
+      project = await call("mod_start", { ids: seed, dir, id: newId, name: newName, newPrefix: asNew ? prefix : null });
       message = `${seed.length === 1 ? "The resource was" : "The resources were"} written as editable files. Edit them in Blender or an image editor, keep the file names, then build.`;
       seed = [];
     } catch (e) {
@@ -89,6 +91,11 @@
         <div class="row"><span class="lbl">Mod id</span><input bind:value={newId} spellcheck="false" /></div>
         <div class="row"><span class="lbl">Name</span><input bind:value={newName} /></div>
       {/if}
+      <label class="check"><input type="checkbox" bind:checked={asNew} />Add as new resources and keep the game's</label>
+      {#if asNew}
+        <div class="row"><span class="lbl">Prefix</span><input bind:value={prefix} spellcheck="false" /></div>
+        <p class="faint hint">New names are the prefix plus the file name, for example {prefix}wep_assaultrifle_01. Game scripts decide where a new model appears; that part is Lua mod work.</p>
+      {/if}
       <div><button class="primary" disabled={busy} onclick={start}><FolderPlus size={14} />{project ? "Add to this project" : "Create project"}</button></div>
     </div>
   {:else if seed.length}
@@ -104,7 +111,7 @@
     <div class="list">
       {#each project.replace as r, i}
         <div class="item">
-          <span class="ty">{r.type}</span>
+          <span class="ty">{r.type}{#if r.base}<em class="new">new</em>{/if}</span>
           <span class="mono nm" title={r.name}>{r.name}</span>
           <span class="mono file">{r.file}</span>
           <button class="ghost icon" onclick={() => remove(i)} aria-label="Remove"><Trash2 size={13} /></button>
@@ -140,8 +147,10 @@
   .fields { display: grid; grid-template-columns: 1fr 1fr 120px; gap: 8px; }
   .fields label { display: flex; flex-direction: column; gap: 4px; }
   .list { display: flex; flex-direction: column; border-top: 1px solid var(--line-soft); }
-  .item { display: grid; grid-template-columns: 60px minmax(0, 1.3fr) minmax(0, 1fr) 28px; align-items: center; gap: 8px; height: 30px; border-bottom: 1px solid var(--line-soft); }
-  .ty { color: var(--muted); }
+  .item { display: grid; grid-template-columns: 96px minmax(0, 1.3fr) minmax(0, 1fr) 28px; align-items: center; gap: 8px; height: 30px; border-bottom: 1px solid var(--line-soft); }
+  .ty { color: var(--muted); display: flex; gap: 6px; align-items: center; }
+  .new { font-style: normal; font-size: 11px; color: var(--mod); }
+  .hint { margin: 0; font-size: 12px; }
   .nm, .file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file { color: var(--faint); }
   .msg { margin: 0; color: var(--muted); }

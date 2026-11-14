@@ -105,6 +105,9 @@ enum Cmd {
         id: String,
         #[arg(long)]
         name: String,
+        /// Add new resources named <prefix><file name> instead of replacing the game's, e.g. "mymod/".
+        #[arg(long)]
+        new_prefix: Option<String>,
     },
     /// Builds an Obsidian mod folder from a Minediver mod project (mod.json).
     Pack { project: PathBuf, #[arg(long, short)] out: PathBuf },
@@ -197,13 +200,13 @@ fn main() -> Result<()> {
         Cmd::UnitStats => unit_stats(&ar)?,
         Cmd::Blend { hash } => blend_dbg(&ar, &names, u64::from_str_radix(&hash, 16)?)?,
         Cmd::Selftest => selftest(&ar)?,
-        Cmd::Start { pick, dir, id, name } => {
+        Cmd::Start { pick, dir, id, name, new_prefix } => {
             let f = Filter::new(&pick.query()?)?;
             let mut seen = std::collections::HashSet::new();
             let picked: Vec<_> = ar.assets.iter().filter(|a| f.matches(&names, a) && seen.insert((a.type_hash, a.name_hash))).collect();
             let linker = minediver::links::Linker::new(&ar);
             let ex = Exporter::new(&ar, &names, &linker);
-            let p = minediver::pack::start(&ex, &picked, &dir, &id, &name)?;
+            let p = minediver::pack::start(&ex, &picked, &dir, &id, &name, new_prefix.as_deref())?;
             println!("{}", serde_json::to_string_pretty(&p)?);
         }
         Cmd::Pack { project, out } => {
