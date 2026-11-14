@@ -145,3 +145,55 @@ pub fn parse(d: &[u8]) -> Result<Unit> {
     }
     Ok(Unit { geometries, rest_at: c.p })
 }
+
+/// Writes one geometry the way `parse` reads it.
+pub fn write_geometry(out: &mut Vec<u8>, g: &Geometry) {
+    let u = |out: &mut Vec<u8>, v: u32| out.extend(v.to_le_bytes());
+    u(out, g.vertices.len() as u32);
+    out.extend_from_slice(&g.vertices);
+    u(out, g.head[0]);
+    u(out, g.head[1]);
+    u(out, g.vertex_count);
+    u(out, g.stride);
+    u(out, g.channels.len() as u32);
+    for c in &g.channels {
+        u(out, c.semantic);
+        u(out, c.format);
+        u(out, c.set);
+        u(out, c.extra);
+        out.push(c.flag);
+    }
+    for w in g.index_format {
+        u(out, w);
+    }
+    u(out, g.index_count);
+    u(out, g.indices.len() as u32);
+    out.extend_from_slice(&g.indices);
+    u(out, g.batches.len() as u32);
+    for b in &g.batches {
+        u(out, b.material);
+        u(out, b.start);
+        u(out, b.triangles);
+        u(out, b.extra);
+    }
+    for f in g.min.iter().chain(g.max.iter()).chain(std::iter::once(&g.radius)) {
+        out.extend(f.to_le_bytes());
+    }
+    u(out, g.materials.len() as u32);
+    for m in &g.materials {
+        u(out, m.len() as u32);
+        out.extend_from_slice(m.as_bytes());
+    }
+}
+
+/// The unit written back from its parts: the same bytes as the original.
+pub fn write(u: &Unit, orig: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(orig.len());
+    out.extend(VERSION.to_le_bytes());
+    out.extend((u.geometries.len() as u32).to_le_bytes());
+    for g in &u.geometries {
+        write_geometry(&mut out, g);
+    }
+    out.extend_from_slice(&orig[u.rest_at..]);
+    out
+}
