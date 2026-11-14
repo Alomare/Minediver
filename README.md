@@ -57,7 +57,7 @@ Repacking covers models without bones (weapons, props, vehicle parts that don't 
 
 What the builder does: a model's parts are rebuilt from the GLB in the game's own vertex layout, with everything else in the unit (nodes, physics, scripts) kept as it was. A PNG becomes a DDS in the same compressed format as the game texture it replaces, with all mip levels. A `.dds` or `.unit` file in the project is used as it is. Remove a line from the list to leave that file alone.
 
-Limits for now: models with bones (characters, enemies) can be extracted but not repacked, a part can hold at most 65,535 vertices, and replacing a model changes every copy of that model in the game. Adding a brand new weapon next to the old ones needs game scripts as well, which is Obsidian mod work outside Minediver.
+Models with bones (characters, enemies) export with their skeleton and skin weights, so they come into Blender rigged and in the pose the game binds them in. Limits for now: models with bones cannot be repacked yet, a part can hold at most 65,535 vertices, and replacing a model changes every copy of that model in the game. Adding a brand new weapon next to the old ones needs game scripts as well, which is Obsidian mod work outside Minediver.
 
 ## Names
 

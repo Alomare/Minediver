@@ -198,11 +198,30 @@ impl<'a> Exporter<'a> {
         out
     }
 
+    /// The skeleton of a skinned unit: skins, scene graph and bone names. None for a unit without skins
+    /// or when the scene graph is not found.
+    pub fn rig(&self, a: &Asset, u: &unit::Unit, data: &[u8]) -> Option<gltf::Rig> {
+        let (skins, end) = unit::skins(data, u.rest_at).ok()?;
+        if skins.is_empty() {
+            return None;
+        }
+        let names = self
+            .ar
+            .find(hash::hash("bones"), a.name_hash)
+            .and_then(|b| self.ar.read_variant(b, 0).ok())
+            .map(|(bd, _)| unit::bone_names(&bd))
+            .unwrap_or_default();
+        let hashes: Vec<u32> = names.keys().copied().collect();
+        let nodes = unit::find_graph(data, end, &skins, &hashes)?;
+        Some(gltf::Rig { nodes, skins, names })
+    }
+
     pub fn model_glb(&self, a: &Asset, with_textures: bool) -> Result<(Vec<u8>, ModelTextures)> {
         let (d, _) = self.ar.read_variant(a, 0)?;
         let u = unit::parse(&d)?;
         let t = self.model_textures(a, &u, with_textures);
-        let glb = gltf::unit_to_glb(&u, &display_name(self.names, a), &t.images, &t.maps)?;
+        let rig = self.rig(a, &u, &d);
+        let glb = gltf::unit_to_glb_rigged(&u, &display_name(self.names, a), &t.images, &t.maps, rig.as_ref())?;
         Ok((glb, t))
     }
 
@@ -230,7 +249,8 @@ impl<'a> Exporter<'a> {
                 Kind::Model if o.model == "glb" => {
                     let u = unit::parse(&data)?;
                     let t = self.model_textures(a, &u, true);
-                    let glb = gltf::unit_to_glb(&u, &display_name(self.names, a), &t.images, &t.maps)?;
+                    let rig = self.rig(a, &u, &data);
+                    let glb = gltf::unit_to_glb_rigged(&u, &display_name(self.names, a), &t.images, &t.maps, rig.as_ref())?;
                     let p = with_ext(&base, ".glb");
                     write(&p, &glb)?;
                     written.push(p);

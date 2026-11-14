@@ -222,6 +222,25 @@ fn unit_stats(ar: &Archive) -> Result<()> {
             Ok(u) => {
                 ok += 1;
                 if minediver::unit::write(&u, &d) != d { *errs.entry("write differs from original".into()).or_default() += 1; }
+                let skinned = u.geometries.iter().filter(|g| g.channels.iter().any(|c| c.semantic == 6)).count();
+                match minediver::unit::skins(&d, u.rest_at) {
+                    Ok((s, after)) => {
+                        *layouts.entry(format!("SKINS {} for {} skinned geometries", s.len(), skinned)).or_default() += 1;
+                        let bone_hashes: Vec<u32> = ar.find(hash::hash("bones"), a.name_hash).and_then(|b| ar.read_variant(b, 0).ok()).map(|(bd, _)| minediver::unit::bone_names(&bd).into_keys().collect()).unwrap_or_default();
+                        match minediver::unit::find_graph(&d, after, &s, &bone_hashes) {
+                            Some(nodes) => {
+                                let in_range = s.iter().all(|k| k.nodes.iter().all(|&n| (n as usize) < nodes.len()));
+                                let bones_ok = ar.find(hash::hash("bones"), a.name_hash).and_then(|b| ar.read_variant(b, 0).ok()).map(|(bd, _)| {
+                                    let names = minediver::unit::bone_names(&bd);
+                                    names.keys().all(|h| nodes.iter().any(|n| n.name == *h))
+                                });
+                                *layouts.entry(format!("GRAPH skin nodes in range {in_range}, bones match {bones_ok:?}")).or_default() += 1;
+                            }
+                            None => *errs.entry(format!("no scene graph {:016x} bones {}", a.name_hash, bone_hashes.len())).or_default() += 1,
+                        }
+                    }
+                    Err(e) => *errs.entry(format!("skins: {e:#}")).or_default() += 1,
+                }
                 for g in &u.geometries {
                     let l: Vec<String> = g.channels.iter().map(|c| format!("{}:{}:{}", c.semantic, c.format, c.set)).collect();
                     *layouts.entry(format!("stride {} [{}]", g.stride, l.join(" "))).or_default() += 1;
