@@ -170,7 +170,7 @@
   .row { position: absolute; left: 0; right: 0; height: 26px; padding: 0; cursor: default; border-bottom: 1px solid var(--line-soft); }
   .row:hover { background: var(--hover); }
   .row.sel { background: var(--select); }
-  .table:focus-within .row.focus { box-shadow: inset 2px 0 0 var(--accent); }
+  .table:focus-within .row.focus { outline: 1px solid var(--accent); outline-offset: -1px; }
   .row span { padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .name.hash { font-family: var(--mono); font-size: 12px; color: var(--muted); }
   .patch { font-style: normal; margin-left: 8px; font-size: 11px; color: var(--mod); }

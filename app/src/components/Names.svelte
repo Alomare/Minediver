@@ -47,7 +47,7 @@
 
 <Dialog title="Names" width={620}>
   <p class="muted lead">
-    The game stores resources by hash, not by name. Minediver ships the names found in the game files; more come from shared lists or from guessing below.
+    The game stores resources under hashes. Minediver ships the names found in the game files; more come from shared lists or from guessing below.
   </p>
   {#if cov}
     <div class="total">

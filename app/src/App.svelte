@@ -3,7 +3,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { Search, Download, Settings as Gear, PanelLeft, PanelRight, BookA, Hammer, FolderOpen, X } from "@lucide/svelte";
   import { app, runQuery, openGame, selectedIds } from "./lib/state.svelte.js";
-  import { call, on, KINDS } from "./lib/api.js";
+  import { call, on } from "./lib/api.js";
   import Sidebar from "./components/Sidebar.svelte";
   import Table from "./components/Table.svelte";
   import Inspector from "./components/Inspector.svelte";
@@ -39,11 +39,6 @@
   function onSearch() {
     clearTimeout(timer);
     timer = setTimeout(runQuery, 90);
-  }
-
-  function toggleKind(k) {
-    app.kinds = app.kinds.includes(k) ? app.kinds.filter((x) => x !== k) : [...app.kinds, k];
-    runQuery();
   }
 
   export async function extractSelected(ask = false) {
@@ -100,13 +95,8 @@
       {#if app.text}<button class="ghost icon clear" onclick={() => { app.text = ""; runQuery(); }} aria-label="Clear search"><X size={14} /></button>{/if}
       <span class="kbd">Ctrl F</span>
     </div>
-    <div class="chips">
-      {#each KINDS.slice(0, 6) as [k, label]}
-        <button class="chip" class:on={app.kinds.includes(k)} onclick={() => toggleKind(k)}>{label}</button>
-      {/each}
-    </div>
     <div class="spacer"></div>
-    <button class="ghost" data-tip="Turn edited files into an Obsidian mod" onclick={() => (app.dialog = "mod")}><Hammer size={15} />Mod builder</button>
+    <button class="ghost modbtn" data-tip="Turn edited files into an Obsidian mod" onclick={() => (app.dialog = "mod")}><Hammer size={15} />Mod builder</button>
     <button class="ghost icon" data-tip="Names" onclick={() => (app.dialog = "names")}><BookA size={16} /></button>
     <button class="ghost icon tip-left" data-tip="Settings (Ctrl ,)" onclick={() => (app.dialog = "settings")}><Gear size={16} /></button>
     <button class="primary" disabled={!app.summary || (!app.selected.size && app.focus < 0)} onclick={() => extractSelected(false)}>
@@ -156,21 +146,18 @@
   }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 750; letter-spacing: 0.01em; padding: 0 6px 0 2px; }
   .search {
-    display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 9px; width: min(380px, 32vw);
+    display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 9px; width: min(520px, 42vw);
     background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); color: var(--faint);
   }
   .search:focus-within { border-color: var(--accent); }
   .search input { flex: 1; border: 0; background: transparent; height: 26px; padding: 0; color: var(--text); outline: none; }
   .search .clear { height: 22px; width: 22px; }
-  .chips { display: flex; gap: 4px; margin-left: 4px; }
-  .chip { height: 26px; padding: 0 9px; border-radius: 13px; background: transparent; color: var(--muted); }
-  .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
   .spacer { flex: 1; }
+  .modbtn :global(svg) { color: var(--mod); }
   .center { grid-area: center; min-width: 0; min-height: 0; background: var(--panel); }
   .start { grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
   .start h1 { margin: 6px 0 0; font-size: 20px; font-weight: 700; }
   .start p { margin: 0 0 8px; max-width: 460px; text-align: center; }
   .bar { width: 280px; height: 4px; background: var(--raised); border-radius: 2px; overflow: hidden; }
   .bar div { height: 100%; background: var(--accent); }
-  @media (max-width: 1150px) { .chips { display: none; } }
 </style>

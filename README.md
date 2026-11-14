@@ -6,9 +6,9 @@ The game stores every file under a hash instead of a name. Minediver ships the n
 
 ## Install
 
-**Windows:** download `Minediver_<version>_x64-setup.exe` from the Releases page and run it. A portable zip (`Minediver-<version>-portable-windows.zip`) holds the same program and the command line tool, no install needed.
+On Windows, download `Minediver_<version>_x64-setup.exe` from the Releases page and run it. A portable zip (`Minediver-<version>-portable-windows.zip`) holds the same program and the command line tool and needs no install.
 
-**Linux:** download the `.AppImage`, mark it executable (`chmod +x Minediver_*.AppImage`) and run it. A `.deb` is there too.
+On Linux, download the `.AppImage`, mark it executable (`chmod +x Minediver_*.AppImage`) and run it. A `.deb` is there too.
 
 Minediver checks for updates on request (Settings, Check for updates) and installs them in place.
 
@@ -48,7 +48,7 @@ Formats (Settings):
 
 ## Making a mod (experimental)
 
-Repacking works for models without bones (weapons, props, vehicles parts that don't bend) and for textures. It has not been tested in the game yet.
+Repacking covers models without bones (weapons, props, vehicle parts that don't bend) and textures.
 
 1. Select the models or textures to change, right-click, **Start a mod from this**, and choose an empty folder. Minediver writes each model as GLB, the textures each one uses as PNG, and a `mod.json` that lists them.
 2. Edit the files. Keep the file names. In Blender, edit the `geometry_N` objects and export with File, Export, glTF 2.0 (`.glb`), over the same file. A new part should be joined into one of the existing `geometry_N` objects, and should use one of the existing materials.

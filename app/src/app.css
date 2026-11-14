@@ -115,3 +115,6 @@ label.check { display: inline-flex; align-items: center; gap: 6px; cursor: point
 }
 [data-tip].tip-left:hover::after { left: auto; right: 0; transform: none; }
 @keyframes tip { from { visibility: hidden; } to { visibility: visible; } }
+
+::selection { background: var(--select); color: var(--text); }
+input, textarea { caret-color: var(--accent); }

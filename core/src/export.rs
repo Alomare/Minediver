@@ -265,7 +265,7 @@ impl<'a> Exporter<'a> {
                             write(&native, &file)?;
                             written.push(native);
                         } else {
-                            let ff = ff.as_deref().context("ffmpeg is needed for this audio format; set its path in Settings")?;
+                            let ff = ff.as_deref().context("This audio format needs ffmpeg. Set the ffmpeg path in Settings")?;
                             write(&native, &file)?;
                             let target = native.with_extension(want);
                             let r = ffmpeg_convert(ff, &native, &target, &[]);
@@ -282,7 +282,7 @@ impl<'a> Exporter<'a> {
                     let raw = with_ext(&base, &format!(".{ext}"));
                     write(&raw, &movie)?;
                     if o.video == "mp4" {
-                        let ff = find_ffmpeg(o.ffmpeg.as_deref()).context("ffmpeg is needed for MP4; set its path in Settings")?;
+                        let ff = find_ffmpeg(o.ffmpeg.as_deref()).context("MP4 needs ffmpeg. Set the ffmpeg path in Settings")?;
                         let mp4 = with_ext(&base, ".mp4");
                         ffmpeg_convert(&ff, &raw, &mp4, &["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-c:a", "aac"])?;
                         std::fs::remove_file(&raw).ok();

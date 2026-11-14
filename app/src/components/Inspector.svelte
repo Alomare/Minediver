@@ -58,7 +58,7 @@
     <p class="hint">{error || "Select a resource to see it here."}</p>
   {:else}
     {#key info.hash + info.bundle}
-      <div class="preview">
+      <div class="preview" class:flat={info.kind !== "texture"}>
         {#if info.kind === "texture" && info.texture}
           <img src={previewUrl(`texture/${id}`)} alt={info.name} />
         {:else if info.kind === "model" && info.model}
@@ -139,6 +139,7 @@
     flex: none; height: 260px; display: grid; place-items: center; border-bottom: 1px solid var(--line);
     background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0 / 16px 16px;
   }
+  .preview.flat { background: var(--panel); }
   .preview img { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: auto; }
   .kind { color: var(--faint); font-weight: 600; background: var(--bg); padding: 4px 10px; border-radius: 4px; }
   .meta { padding: 12px 14px 20px; user-select: text; }
@@ -150,8 +151,9 @@
   .copyable:hover { color: var(--accent); }
   .bad { color: var(--bad); }
   h3 { margin: 14px 0 6px; }
-  table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  td { padding: 3px 6px 3px 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); vertical-align: top; overflow-wrap: anywhere; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+  td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line-soft); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  td:last-child { padding-right: 0; }
   .clips { display: flex; flex-direction: column; }
   .clip { display: flex; align-items: center; gap: 8px; height: 28px; font-size: 12px; border-radius: 4px; }
   .clip.on { background: var(--accent-soft); }
