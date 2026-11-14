@@ -221,22 +221,31 @@ pub fn png_to_dds_like(png_bytes: &[u8], original: &[u8]) -> Result<Vec<u8>> {
     } else {
         None
     };
-    let Some(fmt) = fmt else { return Ok(bgra_dds(w, h, &mips)) };
+    // Every game texture ends with a 4-byte word after the last mip (a category the game reads); the new
+    // file keeps the original's. Without it the game hangs on the loading screen (seen 2026-11-14).
+    let tail = original.get(original.len().saturating_sub(4)..).unwrap_or(&[]).to_vec();
+    let single = original.len() >= 32 && u32::from_le_bytes(original[28..32].try_into().unwrap()) <= 1;
+    let mips = if single { mips.into_iter().take(1).collect() } else { mips };
+    let Some(fmt) = fmt else {
+        let mut out = bgra_dds(w, h, &mips);
+        out.extend(tail);
+        return Ok(out);
+    };
+    // The original's header, flags included, with the new size, first-level size and mip count.
     let mut out = original[..128].to_vec();
     let put = |o: &mut Vec<u8>, at: usize, v: u32| o[at..at + 4].copy_from_slice(&v.to_le_bytes());
-    put(&mut out, 8, 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000);
     put(&mut out, 12, h);
     put(&mut out, 16, w);
     put(&mut out, 20, fmt.compressed_size(w as usize, h as usize) as u32);
+    put(&mut out, 24, 0);
     put(&mut out, 28, mips.len() as u32);
-    let caps = u32::from_le_bytes(out[108..112].try_into().unwrap()) | 0x1000 | 0x8 | 0x400000;
-    put(&mut out, 108, caps);
     let params = texpresso::Params { algorithm: texpresso::Algorithm::ClusterFit, ..Default::default() };
     for (mw, mh, px) in &mips {
         let mut block = vec![0u8; fmt.compressed_size(*mw as usize, *mh as usize)];
         fmt.compress(px, *mw as usize, *mh as usize, params, &mut block);
         out.extend(block);
     }
+    out.extend(tail);
     Ok(out)
 }
 
@@ -644,6 +653,7 @@ mod tests {
         original[76..80].copy_from_slice(&32u32.to_le_bytes());
         original[80..84].copy_from_slice(&4u32.to_le_bytes());
         original[84..88].copy_from_slice(b"DXT5");
+        original[28..32].copy_from_slice(&5u32.to_le_bytes());
         let dds = super::png_to_dds_like(&png, &original).unwrap();
         let info = crate::texture::info(&dds).unwrap();
         assert_eq!((info.width, info.height, info.mips, info.format.as_str()), (16, 8, 5, "BC3 (DXT5)"));
@@ -651,7 +661,8 @@ mod tests {
         let err: u64 = back.iter().zip(&px).map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs() as u64).sum();
         assert!(err / (px.len() as u64) < 12, "mean error {}", err as f64 / px.len() as f64);
         // 16x8 BC3 with mips 8x4, 4x2, 2x1, 1x1: 128 + 32 + 16 + 16 + 16 bytes after the header.
-        assert_eq!(dds.len(), 128 + 128 + 32 + 16 + 16 + 16);
+        assert_eq!(dds.len(), 128 + 128 + 32 + 16 + 16 + 16 + 4, "header, five mips, the original tail");
+        assert_eq!(dds[dds.len() - 4..], original[124..128]);
     }
 }
 
