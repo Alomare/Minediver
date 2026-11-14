@@ -92,6 +92,8 @@ enum Cmd {
     Harvest { out: PathBuf },
     /// Parses every unit and reports what layouts appear.
     UnitStats,
+    /// Checks the repack path: every unit to GLB, back through the rebuilder, and parsed again.
+    Selftest,
     /// Builds an Obsidian mod folder from a Minediver mod project (mod.json).
     Pack { project: PathBuf, #[arg(long, short)] out: PathBuf },
 }
@@ -179,6 +181,7 @@ fn main() -> Result<()> {
             println!("{} names in {:.2?}; resources named {before} -> {after} of {}", found.len(), t.elapsed(), ar.assets.len());
         }
         Cmd::UnitStats => unit_stats(&ar)?,
+        Cmd::Selftest => selftest(&ar)?,
         Cmd::Pack { project, out } => {
             let r = minediver::pack::build(&ar, &names, &project, &out)?;
             println!("{}", serde_json::to_string_pretty(&r)?);
@@ -213,5 +216,58 @@ fn unit_stats(ar: &Archive) -> Result<()> {
     for (k, v) in layouts {
         println!("LAYOUT {v:5} {k}");
     }
+    Ok(())
+}
+
+fn selftest(ar: &Archive) -> Result<()> {
+    let th = hash::hash("unit");
+    let units: Vec<_> = ar.assets.iter().filter(|a| a.type_hash == th && a.patch.is_none()).collect();
+    let results: Vec<Result<bool>> = units
+        .par_iter()
+        .map(|a| -> Result<bool> {
+            let (d, _) = ar.read_variant(a, 0)?;
+            let u = minediver::unit::parse(&d)?;
+            if u.geometries.iter().any(|g| g.channels.iter().any(|c| c.semantic == 6)) {
+                return Ok(false);
+            }
+            let glb = minediver::gltf::unit_to_glb(&u, "t", &[], &Default::default())?;
+            let meshes = minediver::glb_read::read(&glb)?;
+            let mut notes = Vec::new();
+            let back = minediver::pack::rebuild_unit(&d, &meshes, &mut notes)?;
+            let u2 = minediver::unit::parse(&back)?;
+            anyhow::ensure!(u2.geometries.len() == u.geometries.len(), "geometry count");
+            for (g, g2) in u.geometries.iter().zip(&u2.geometries) {
+                anyhow::ensure!(g.index_count == g2.index_count, "index count {} -> {}", g.index_count, g2.index_count);
+                for k in 0..3 {
+                    anyhow::ensure!((g.min[k] - g2.min[k]).abs() < 1e-4 && (g.max[k] - g2.max[k]).abs() < 1e-4, "bounds moved");
+                }
+                let (p1, _) = minediver::gltf::channel(g, 0, 0).unwrap();
+                let (p2, _) = minediver::gltf::channel(g2, 0, 0).unwrap();
+                let i1 = minediver::gltf::indices(g);
+                let i2 = minediver::gltf::indices(g2);
+                // Same triangles in the same order (by corner positions), wherever the vertices went.
+                for (a, b) in i1.iter().zip(&i2) {
+                    for k in 0..3 {
+                        anyhow::ensure!((p1[*a as usize * 3 + k] - p2[*b as usize * 3 + k]).abs() < 1e-5, "triangle corner moved");
+                    }
+                }
+            }
+            Ok(true)
+        })
+        .collect();
+    let (mut ok, mut skinned, mut bad) = (0, 0, 0);
+    for (a, r) in units.iter().zip(results) {
+        match r {
+            Ok(true) => ok += 1,
+            Ok(false) => skinned += 1,
+            Err(e) => {
+                bad += 1;
+                if bad <= 10 {
+                    eprintln!("{:016x}: {e:#}", a.name_hash);
+                }
+            }
+        }
+    }
+    println!("units round-tripped through GLB: {ok} ok, {skinned} skinned (skipped), {bad} failed");
     Ok(())
 }

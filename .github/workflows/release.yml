@@ -1,0 +1,74 @@
+# A tag like v0.2.0 builds the Windows installer and the Linux AppImage and .deb, signs them for the
+# updater, writes latest.json, and puts everything in a draft release. Publishing the draft makes it the
+# release the updater sees.
+#
+# Needs the repository secrets TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+          - os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Core tests
+        run: cargo test -p minediver-core
+      - name: Packages
+        working-directory: app
+        run: npm ci
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          args: --config src-tauri/tauri.release.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: Minediver ${{ github.ref_name }}
+          releaseBody: See CHANGELOG.md for what changed.
+          releaseDraft: true
+          includeUpdaterJson: true
+      - name: Portable Windows zip and CLI
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo build --release -p minediver-core
+          mkdir -p portable
+          cp target/release/minediver.exe target/release/minediver-cli.exe portable/
+          cd portable && 7z a "../Minediver-${GITHUB_REF_NAME#v}-portable-windows.zip" . && cd ..
+          gh release upload "$GITHUB_REF_NAME" "Minediver-${GITHUB_REF_NAME#v}-portable-windows.zip" --clobber
+      - name: Linux CLI
+        if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cargo build --release -p minediver-core
+          tar -czf "minediver-cli-${GITHUB_REF_NAME#v}-linux.tar.gz" -C target/release minediver-cli
+          gh release upload "$GITHUB_REF_NAME" "minediver-cli-${GITHUB_REF_NAME#v}-linux.tar.gz" --clobber
