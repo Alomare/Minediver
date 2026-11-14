@@ -72,6 +72,7 @@ minediver-cli census
 minediver-cli list --kind model --include "equipment/wep_*"
 minediver-cli extract --kind texture --text rifle -o out --texture both
 minediver-cli info equipment/wep_assaultrifle_01 --type unit
+minediver-cli start --type unit --include "equipment/wep_assaultrifle_01" <project folder> --id me.rifle --name "My rifle"
 minediver-cli pack <project folder> -o <mod folder>
 minediver-cli harvest names.txt
 ```

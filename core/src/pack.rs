@@ -92,7 +92,7 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
                 let ext = Path::new(&r.file).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
                 match ext.as_str() {
                     "dds" => src,
-                    "png" => png_to_dds(&src)?,
+                    "png" => png_to_dds_like(&src, &orig)?,
                     _ => bail!("{}: textures take .png or .dds", r.file),
                 }
             }
@@ -130,6 +130,12 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
 /// Uncompressed BGRA8 DDS with every mip, from a PNG. Larger than BC3, but the game reads it and nothing
 /// is lost.
 pub fn png_to_dds(png_bytes: &[u8]) -> Result<Vec<u8>> {
+    let (w, h, mips) = png_mips(png_bytes)?;
+    Ok(bgra_dds(w, h, &mips))
+}
+
+/// The PNG decoded, with a box-filtered chain of mips down to 1x1.
+fn png_mips(png_bytes: &[u8]) -> Result<(u32, u32, Vec<(u32, u32, Vec<u8>)>)> {
     let dec = png::Decoder::new(std::io::Cursor::new(png_bytes));
     let mut r = dec.read_info()?;
     let mut buf = vec![0; r.output_buffer_size().context("png size")?];
@@ -160,10 +166,12 @@ pub fn png_to_dds(png_bytes: &[u8]) -> Result<Vec<u8>> {
                 }
             }
         }
-        let (pw2, ph2) = (*pw, *ph);
-        let _ = (pw2, ph2);
         mips.push((nw, nh, next));
     }
+    Ok((w, h, mips))
+}
+
+fn bgra_dds(w: u32, h: u32, mips: &[(u32, u32, Vec<u8>)]) -> Vec<u8> {
     let mut out = vec![0u8; 128];
     out[..4].copy_from_slice(b"DDS ");
     let put = |o: &mut Vec<u8>, at: usize, v: u32| o[at..at + 4].copy_from_slice(&v.to_le_bytes());
@@ -181,10 +189,48 @@ pub fn png_to_dds(png_bytes: &[u8]) -> Result<Vec<u8>> {
     put(&mut out, 100, 0x000000ff);
     put(&mut out, 104, 0xff000000);
     put(&mut out, 108, 0x1000 | 0x8 | 0x400000);
-    for (_, _, m) in &mips {
+    for (_, _, m) in mips {
         for p in m.chunks(4) {
             out.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
         }
+    }
+    out
+}
+
+/// A PNG as a DDS in the format of the game texture it replaces (BC1, BC2, BC3, BC4 or BC5 with the
+/// same header layout and mips down to 1x1), so the file stays as small as the original. Any other
+/// original format gets uncompressed BGRA8.
+pub fn png_to_dds_like(png_bytes: &[u8], original: &[u8]) -> Result<Vec<u8>> {
+    let (w, h, mips) = png_mips(png_bytes)?;
+    let fourcc = original.get(84..88).unwrap_or(b"    ");
+    let flags = original.get(80..84).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+    let fmt = if original.len() >= 128 && &original[..4] == b"DDS " && flags & 4 != 0 {
+        match fourcc {
+            b"DXT1" => Some(texpresso::Format::Bc1),
+            b"DXT2" | b"DXT3" => Some(texpresso::Format::Bc2),
+            b"DXT4" | b"DXT5" => Some(texpresso::Format::Bc3),
+            b"ATI1" | b"BC4U" => Some(texpresso::Format::Bc4),
+            b"ATI2" | b"BC5U" => Some(texpresso::Format::Bc5),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let Some(fmt) = fmt else { return Ok(bgra_dds(w, h, &mips)) };
+    let mut out = original[..128].to_vec();
+    let put = |o: &mut Vec<u8>, at: usize, v: u32| o[at..at + 4].copy_from_slice(&v.to_le_bytes());
+    put(&mut out, 8, 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000);
+    put(&mut out, 12, h);
+    put(&mut out, 16, w);
+    put(&mut out, 20, fmt.compressed_size(w as usize, h as usize) as u32);
+    put(&mut out, 28, mips.len() as u32);
+    let caps = u32::from_le_bytes(out[108..112].try_into().unwrap()) | 0x1000 | 0x8 | 0x400000;
+    put(&mut out, 108, caps);
+    let params = texpresso::Params { algorithm: texpresso::Algorithm::ClusterFit, ..Default::default() };
+    for (mw, mh, px) in &mips {
+        let mut block = vec![0u8; fmt.compressed_size(*mw as usize, *mh as usize)];
+        fmt.compress(px, *mw as usize, *mh as usize, params, &mut block);
+        out.extend(block);
     }
     Ok(out)
 }
@@ -432,5 +478,26 @@ mod tests {
         assert_eq!((info.width, info.height, info.mips), (8, 4, 4));
         let (_, _, back) = crate::texture::decode_rgba(&dds).unwrap();
         assert_eq!(back, px);
+    }
+
+    #[test]
+    fn a_png_takes_the_bc_format_of_the_texture_it_replaces() {
+        let (w, h) = (16u32, 8u32);
+        let px: Vec<u8> = (0..w * h).flat_map(|i| [((i % w) * 16) as u8, 120, ((i / w) * 32) as u8, 255]).collect();
+        let png = crate::texture::encode_png(w, h, &px).unwrap();
+        let mut original = vec![0u8; 128];
+        original[..4].copy_from_slice(b"DDS ");
+        original[4..8].copy_from_slice(&124u32.to_le_bytes());
+        original[76..80].copy_from_slice(&32u32.to_le_bytes());
+        original[80..84].copy_from_slice(&4u32.to_le_bytes());
+        original[84..88].copy_from_slice(b"DXT5");
+        let dds = super::png_to_dds_like(&png, &original).unwrap();
+        let info = crate::texture::info(&dds).unwrap();
+        assert_eq!((info.width, info.height, info.mips, info.format.as_str()), (16, 8, 5, "BC3 (DXT5)"));
+        let (_, _, back) = crate::texture::decode_rgba(&dds).unwrap();
+        let err: u64 = back.iter().zip(&px).map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs() as u64).sum();
+        assert!(err / (px.len() as u64) < 12, "mean error {}", err as f64 / px.len() as f64);
+        // 16x8 BC3 with mips 8x4, 4x2, 2x1, 1x1: 128 + 32 + 16 + 16 + 16 bytes after the header.
+        assert_eq!(dds.len(), 128 + 128 + 32 + 16 + 16 + 16);
     }
 }
