@@ -38,7 +38,7 @@ Formats (Settings):
 | Textures | PNG | DDS as stored, or both |
 | Audio | WAV for PCM clips, OGG for Vorbis clips | WAV, MP3, OGG (ffmpeg) |
 | Video | MP4 (ffmpeg) | Bink as stored |
-| Game text (`strings`) | a text file, one `<key>	<text>` line per entry | |
+| Game text (`strings`) | a text file, one entry per line: key hash, a tab, the text | |
 | Everything else | the resource as stored | |
 
 ## A model in Blender
