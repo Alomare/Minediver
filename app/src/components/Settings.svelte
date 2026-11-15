@@ -1,15 +1,21 @@
 <script>
   import { open } from "@tauri-apps/plugin-dialog";
   import { check } from "@tauri-apps/plugin-updater";
-  import { FolderOpen, RefreshCw } from "@lucide/svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { FolderOpen, RefreshCw, ExternalLink } from "@lucide/svelte";
   import { app, saveSettings, openGame } from "../lib/state.svelte.js";
   import { call } from "../lib/api.js";
   import Dialog from "./Dialog.svelte";
 
+  const RELEASES = "https://github.com/Alomare/Minediver/releases/latest";
   let { onpickgame } = $props();
   let s = $state(structuredClone($state.snapshot(app.settings)));
   let ffmpegFound = $state("");
   let update = $state("");
+  let download = $state(false);
+  let version = $state("");
+  getVersion().then((v) => (version = v));
 
   $effect(() => {
     call("find_ffmpeg").then((p) => (ffmpegFound = p ?? ""));
@@ -34,6 +40,12 @@
     try {
       const u = await check();
       if (!u) return (update = "Minediver is up to date.");
+      if (app.portable) {
+        // A portable copy replaces itself by hand: the installer would add a second, installed copy.
+        update = `Version ${u.version} is out. Download the portable zip and unpack it over this folder.`;
+        download = true;
+        return;
+      }
       update = `Installing ${u.version}`;
       await u.downloadAndInstall();
       update = "Installed. Restart Minediver to use it.";
@@ -70,7 +82,8 @@
 
   <section class="upd">
     <button onclick={checkUpdate}><RefreshCw size={14} />Check for updates</button>
-    <span class="faint">{update}</span>
+    {#if download}<button onclick={() => openUrl(RELEASES)}><ExternalLink size={14} />Releases page</button>{/if}
+    <span class="faint">{update || `Version ${version}${app.portable ? ", portable" : ""}`}</span>
   </section>
 
   {#snippet footer()}

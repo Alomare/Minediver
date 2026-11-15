@@ -1,7 +1,7 @@
 <script>
   import { open, save } from "@tauri-apps/plugin-dialog";
   import { FileUp, FileDown } from "@lucide/svelte";
-  import { app, runQuery } from "../lib/state.svelte.js";
+  import { app, runQuery, refreshCategories } from "../lib/state.svelte.js";
   import { call } from "../lib/api.js";
   import Dialog from "./Dialog.svelte";
 
@@ -20,6 +20,7 @@
     result = msg;
     app.rowCache = new Map();
     await load();
+    await refreshCategories();
     runQuery();
   }
   async function importList() {

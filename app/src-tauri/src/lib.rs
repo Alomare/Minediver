@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use minediver::archive::{self, Archive};
+use minediver::category::Categories;
 use minediver::export::{self, Exporter, Kind, Options};
 use minediver::filter::{Filter, Query};
 use minediver::hash::{self, NameDb};
@@ -18,6 +19,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 struct Loaded {
     ar: Archive,
     linker: Linker,
+    /// Rebuilt when names are added, since most categories come from names.
+    cats: RwLock<Arc<Categories>>,
+}
+
+impl Loaded {
+    fn cats(&self) -> Arc<Categories> {
+        self.cats.read().unwrap().clone()
+    }
 }
 
 struct App {
@@ -52,8 +61,25 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
+/// The data folder of a portable copy (a `portable.txt` beside the exe): `data` beside the exe. None for an
+/// installed copy, which keeps the settings in the user's app config folder.
+fn portable_data() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    dir.join("portable.txt").is_file().then(|| dir.join("data"))
+}
+
 fn settings_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("settings.json"))
+    match portable_data() {
+        Some(d) => Some(d.join("settings.json")),
+        None => app.path().app_config_dir().ok().map(|d| d.join("settings.json")),
+    }
+}
+
+/// A portable copy updates by downloading the new zip, not through the installer.
+#[tauri::command]
+fn is_portable() -> bool {
+    portable_data().is_some()
 }
 
 fn save_settings(app: &AppHandle, s: &Settings) {
@@ -94,6 +120,7 @@ struct Summary {
     errors: Vec<(String, String)>,
     ms: u128,
     ffmpeg: Option<String>,
+    cats: Vec<(Kind, String, usize)>,
 }
 
 fn summary(l: &Loaded, names: &NameDb, ms: u128, ffmpeg: Option<String>) -> Summary {
@@ -124,7 +151,34 @@ fn summary(l: &Loaded, names: &NameDb, ms: u128, ffmpeg: Option<String>) -> Summ
         errors: l.ar.errors.clone(),
         ms,
         ffmpeg,
+        cats: l.cats().counts(&l.ar),
     }
+}
+
+/// Textures take the category of the model that uses them, which needs every named material read. That
+/// runs in the background; the finished tree arrives as a `categories` event.
+fn fill_texture_categories(app: &AppHandle, l: Arc<Loaded>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let names = app.state::<App>().names.clone();
+        let c = Arc::new(Categories::build(&l.ar, &names, &l.linker));
+        // A game folder opened since then has its own tree.
+        let current = app.state::<App>().loaded.read().unwrap().as_ref().is_some_and(|cur| Arc::ptr_eq(cur, &l));
+        if current {
+            *l.cats.write().unwrap() = c.clone();
+            let _ = app.emit("categories", c.counts(&l.ar));
+        }
+    });
+}
+
+/// The category tree again, after names were added: from names at once, textures later by event.
+#[tauri::command]
+fn categories(app: AppHandle, state: State<App>) -> Res<Vec<(Kind, String, usize)>> {
+    let l = loaded(&state)?;
+    let c = Arc::new(Categories::from_names(&l.ar, &state.names));
+    *l.cats.write().unwrap() = c.clone();
+    fill_texture_categories(&app, l.clone());
+    Ok(c.counts(&l.ar))
 }
 
 /// Opens a game folder (or finds one through Steam) and indexes every bundle.
@@ -138,10 +192,21 @@ async fn open_game(app: AppHandle, path: Option<String>) -> Res<Summary> {
     let contents = archive::resolve_contents(&dir).ok_or_else(|| format!("No game bundles in {}. Pick the Helldivers folder (the one with contents inside).", dir.display()))?;
     let t = std::time::Instant::now();
     let app2 = app.clone();
-    let ar = tauri::async_runtime::spawn_blocking(move || Archive::scan(&contents, &|n, total| { let _ = app2.emit("scan", (n, total)); })).await.map_err(err)?.map_err(err)?;
-    let linker = Linker::new(&ar);
-    let l = Arc::new(Loaded { ar, linker });
+    let names = state.names.clone();
+    let l = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<Loaded> {
+        let ar = Archive::scan(&contents, &|n, total| {
+            let _ = app2.emit("scan", (n, total));
+        })?;
+        let linker = Linker::new(&ar);
+        let cats = Categories::from_names(&ar, &names);
+        Ok(Loaded { ar, linker, cats: RwLock::new(Arc::new(cats)) })
+    })
+    .await
+    .map_err(err)?
+    .map_err(err)?;
+    let l = Arc::new(l);
     *state.loaded.write().unwrap() = Some(l.clone());
+    fill_texture_categories(&app, l.clone());
     let ffmpeg = {
         let mut s = state.settings.lock().unwrap();
         s.game_dir = Some(dir.display().to_string());
@@ -163,11 +228,16 @@ fn query(state: State<App>, q: Query, sort: Sort) -> Res<Vec<u32>> {
     let l = loaded(&state)?;
     let f = Filter::new(&q).map_err(err)?;
     let names = &state.names;
-    let mut picked: Vec<&archive::Asset> = l.ar.assets.par_iter().filter(|a| f.matches(names, a)).collect();
+    let cats = l.cats();
+    let mut picked: Vec<&archive::Asset> = l.ar.assets.par_iter().filter(|a| f.matches_in(names, a, cats.label(a.id))).collect();
     match sort.key.as_str() {
         "size" => picked.par_sort_by_key(|a| a.size()),
         "type" => picked.par_sort_by_cached_key(|a| (hash::type_label(a.type_hash), export::display_name(names, a))),
         "bundle" => picked.par_sort_by_key(|a| (a.bundle, a.patch)),
+        "category" => picked.par_sort_by_cached_key(|a| {
+            let c = cats.label(a.id);
+            (c == minediver::category::UNNAMED, c.to_string(), export::display_name(names, a))
+        }),
         _ => picked.par_sort_by_cached_key(|a| {
             let n = names.get(a.name_hash);
             (n.is_none(), n.unwrap_or_else(|| hash::hex(a.name_hash)), hash::type_label(a.type_hash))
@@ -190,11 +260,14 @@ struct Row {
     size: u64,
     variants: usize,
     patch: bool,
+    category: String,
+    hash: String,
 }
 
 #[tauri::command]
 fn rows(state: State<App>, ids: Vec<u32>) -> Res<Vec<Row>> {
     let l = loaded(&state)?;
+    let cats = l.cats();
     Ok(ids
         .iter()
         .filter_map(|&i| l.ar.assets.get(i as usize))
@@ -210,9 +283,26 @@ fn rows(state: State<App>, ids: Vec<u32>) -> Res<Vec<Row>> {
                 size: a.size(),
                 variants: a.variants.len(),
                 patch: a.patch.is_some(),
+                category: cats.label(a.id).to_string(),
+                hash: hash::hex(a.name_hash),
             }
         })
         .collect())
+}
+
+/// Writes the listed resources as a tab-separated table: name, hash, type, category, size, bundle.
+#[tauri::command]
+fn export_list(state: State<App>, ids: Vec<u32>, path: String) -> Res<usize> {
+    let l = loaded(&state)?;
+    let cats = l.cats();
+    let mut out = String::from("name\thash\ttype\tcategory\tsize\tbundle\n");
+    let mut n = 0;
+    for a in ids.iter().filter_map(|&i| l.ar.assets.get(i as usize)) {
+        out += &format!("{}\t{:016x}\t{}\t{}\t{}\t{}\n", export::display_name(&state.names, a), a.name_hash, hash::type_label(a.type_hash), cats.label(a.id), a.size(), a.file_name());
+        n += 1;
+    }
+    std::fs::write(&path, out).map_err(err)?;
+    Ok(n)
 }
 
 #[tauri::command]
@@ -457,13 +547,22 @@ fn preview(app: &AppHandle, path: &str) -> Result<(Vec<u8>, &'static str), Strin
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let portable = portable_data();
+    if let Some(d) = &portable {
+        // WebView2 keeps the cache beside the exe too, so a portable copy leaves nothing in the user folders.
+        let _ = std::fs::create_dir_all(d);
+        unsafe { std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", d.join("webview")) };
+    }
+    let mut builder = tauri::Builder::default();
+    if portable.is_none() {
+        builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    }
+    builder
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.set_focus();
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -496,7 +595,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings, set_settings, open_game, query, rows, inspect, extract, cancel_extract, coverage, import_names, export_names,
-            try_names, mod_start, mod_read, mod_save, mod_build, find_ffmpeg
+            try_names, mod_start, mod_read, mod_save, mod_build, find_ffmpeg, is_portable, export_list, categories
         ])
         .run(tauri::generate_context!())
         .expect("error while running Minediver");

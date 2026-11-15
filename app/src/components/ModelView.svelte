@@ -9,6 +9,7 @@
   let status = $state("Loading model");
   let wire = $state(false);
   let renderer, scene, camera, controls, frame, root, ro;
+  let home = null;
 
   onMount(() => {
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -68,6 +69,7 @@
         camera.near = size / 200;
         camera.far = size * 50;
         camera.updateProjectionMatrix();
+        home = { pos: camera.position.clone(), target: controls.target.clone() };
         scene.children.find((c) => c.isGridHelper)?.scale.setScalar(Math.max(0.25, size / 2));
         status = "";
         applyWire();
@@ -76,6 +78,13 @@
       () => (status = "This model could not be shown."),
     );
   });
+
+  function resetView() {
+    if (!home) return;
+    camera.position.copy(home.pos);
+    controls.target.copy(home.target);
+    controls.update();
+  }
 
   function applyWire() {
     root?.traverse((o) => {
@@ -86,7 +95,10 @@
 
 <div class="view" bind:this={host}>
   {#if status}<span class="status">{status}</span>{/if}
-  <button class="ghost wire" class:on={wire} onclick={() => { wire = !wire; applyWire(); }}>Wireframe</button>
+  <div class="tools">
+    <button class="ghost" onclick={resetView}>Reset view</button>
+    <button class="ghost" class:on={wire} onclick={() => { wire = !wire; applyWire(); }}>Wireframe</button>
+  </div>
 </div>
 
 <style>
@@ -94,6 +106,7 @@
   .view :global(canvas) { display: block; width: 100% !important; height: 100% !important; }
   .view { overflow: hidden; }
   .status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); }
-  .wire { position: absolute; right: 6px; bottom: 6px; height: 24px; font-size: 12px; background: var(--panel); border-color: var(--line); }
-  .wire.on { border-color: var(--accent); }
+  .tools { position: absolute; right: 6px; bottom: 6px; display: flex; gap: 4px; }
+  .tools button { height: 24px; font-size: 12px; background: var(--panel); border-color: var(--line); }
+  .tools button.on { border-color: var(--accent); color: var(--accent); }
 </style>

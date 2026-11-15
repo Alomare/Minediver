@@ -1,8 +1,9 @@
 <script>
-  import { Play, Square, Copy } from "@lucide/svelte";
-  import { app, focusedId } from "../lib/state.svelte.js";
-  import { call, previewUrl, formatSize, kindLabel } from "../lib/api.js";
-  import ModelView from "./ModelView.svelte";
+  import { Play, Square, Copy, Maximize2, Search } from "@lucide/svelte";
+  import { app, focusedId, saveLayout, runQuery } from "../lib/state.svelte.js";
+  import { call, previewUrl, formatSize } from "../lib/api.js";
+  import Preview from "./Preview.svelte";
+  import Splitter from "./Splitter.svelte";
 
   let info = $state(null);
   let error = $state("");
@@ -18,6 +19,7 @@
     stop();
     if (cur === undefined) {
       info = null;
+      app.info = null;
       return;
     }
     // A short wait, so holding an arrow key doesn't load every row on the way.
@@ -26,6 +28,7 @@
         const r = await call("inspect", { id: cur });
         if (cur === id) {
           info = r;
+          app.info = r;
           error = "";
         }
       } catch (e) {
@@ -57,17 +60,14 @@
   {#if !info}
     <p class="hint">{error || "Select a resource to see it here."}</p>
   {:else}
-    {#key info.hash + info.bundle}
-      <div class="preview" class:flat={info.kind !== "texture"}>
-        {#if info.kind === "texture" && info.texture}
-          <img src={previewUrl(`texture/${id}`)} alt={info.name} />
-        {:else if info.kind === "model" && info.model}
-          <ModelView url={previewUrl(`model/${id}`)} />
-        {:else}
-          <span class="kind">{kindLabel(info.kind)}</span>
-        {/if}
+    {@const visual = (info.kind === "texture" && info.texture) || (info.kind === "model" && info.model)}
+    {#if visual && !app.big}
+      <div class="pv" style="height: {app.layout.preview}px">
+        <Preview {info} {id} />
+        <button class="ghost icon grow tip-left" onclick={() => (app.big = true)} aria-label="Large preview" data-tip="Large preview (Enter)"><Maximize2 size={14} /></button>
       </div>
-    {/key}
+      <Splitter dir="h" bind:value={app.layout.preview} min={140} max={1400} reset={300} onend={saveLayout} label="Resize the preview" />
+    {/if}
 
     <div class="meta">
       <h2 class:mono={!info.named} title={info.name}>{info.name}</h2>
@@ -106,7 +106,7 @@
           <table>
             <tbody>
               {#each info.model.textures as t}
-                <tr><td>{t.slot}</td><td>{t.param}</td><td class="mono">{t.name ?? t.texture}</td></tr>
+                <tr class="link" onclick={() => { app.text = t.texture; app.cats = []; runQuery(); }} title="Find this texture"><td>{t.slot}</td><td>{t.param}</td><td class="mono">{t.name ?? t.texture}<Search size={11} /></td></tr>
               {/each}
             </tbody>
           </table>
@@ -133,16 +133,15 @@
 </aside>
 
 <style>
-  .insp { grid-area: insp; overflow: hidden auto; scrollbar-gutter: stable; background: var(--bg); border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+  .insp { height: 100%; overflow: hidden; background: var(--bg); display: flex; flex-direction: column; }
   .hint { color: var(--faint); text-align: center; margin: 40px 16px; }
-  .preview {
-    flex: none; height: 260px; display: grid; place-items: center; border-bottom: 1px solid var(--line);
-    background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0 / 16px 16px;
-  }
-  .preview.flat { background: var(--panel); }
-  .preview img { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: auto; }
-  .kind { color: var(--faint); font-weight: 600; background: var(--bg); padding: 4px 10px; border-radius: 4px; }
-  .meta { padding: 12px 14px 20px; user-select: text; }
+  .pv { flex: none; position: relative; max-height: calc(100% - 80px); border-bottom: 1px solid var(--line); }
+  .grow { position: absolute; top: 6px; right: 6px; height: 26px; width: 26px; background: var(--panel); border-color: var(--line); }
+  .meta { flex: 1; min-height: 0; overflow: hidden auto; scrollbar-gutter: stable; padding: 12px 14px 20px; user-select: text; }
+  tr.link { cursor: pointer; }
+  tr.link:hover td { color: var(--text); }
+  tr.link :global(svg) { margin-left: 6px; vertical-align: -1px; opacity: 0; }
+  tr.link:hover :global(svg) { opacity: 1; }
   h2 { font-size: 14px; font-weight: 700; margin: 0 0 10px; word-break: break-all; }
   dl { display: grid; grid-template-columns: 64px 1fr; gap: 4px 10px; margin: 0 0 14px; }
   dt { color: var(--faint); }

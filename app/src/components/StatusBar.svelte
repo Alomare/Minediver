@@ -1,7 +1,7 @@
 <script>
   import { FolderOpen, X } from "@lucide/svelte";
   import { openPath } from "@tauri-apps/plugin-opener";
-  import { app } from "../lib/state.svelte.js";
+  import { app, hiddenSelected } from "../lib/state.svelte.js";
   import { call } from "../lib/api.js";
 
   let job = $derived(app.job);
@@ -27,12 +27,18 @@
       {job.cancelled ? "Stopped" : "Done"}: {job.files.toLocaleString()} files from {job.done.toLocaleString()} resources{#if job.failed}, <button class="link bad" onclick={() => (showErrors = !showErrors)}>{job.failed} failed</button>{/if}
     </span>
     <button class="ghost small" onclick={() => openPath(job.out)}><FolderOpen size={13} />Show folder</button>
+    <button class="ghost small icon" onclick={() => { app.job = null; showErrors = false; }} aria-label="Dismiss"><X size={13} /></button>
   {:else if app.summary}
     <span class="faint">
-      {app.ids.length.toLocaleString()} shown{app.selected.size ? `, ${app.selected.size.toLocaleString()} selected` : ""} of {app.summary.total.toLocaleString()}. {app.summary.named.toLocaleString()} named. Read in {app.summary.ms} ms.
+      {app.ids.length.toLocaleString()} shown of {app.summary.total.toLocaleString()}. {app.summary.named.toLocaleString()} named. Read in {app.summary.ms} ms.
     </span>
   {/if}
   <span class="spacer"></span>
+  {#if app.selected.size}
+    {@const hidden = hiddenSelected()}
+    <span class="checked">{app.selected.size.toLocaleString()} checked{hidden ? `, ${hidden.toLocaleString()} not in this list` : ""}</span>
+    <button class="ghost small" onclick={() => (app.selected = new Set())}><X size={13} />Clear</button>
+  {/if}
   {#if app.toast}<span class="toast">{app.toast}</span>{/if}
   {#if app.summary && !app.summary.ffmpeg}<span class="faint">ffmpeg not found: MP4 and MP3 need it (Settings)</span>{/if}
 </footer>
@@ -45,13 +51,15 @@
 {/if}
 
 <style>
-  .status { grid-area: status; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size: 12px; background: var(--panel); border-top: 1px solid var(--line); min-width: 0; }
+  .status { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size: 12px; background: var(--panel); border-top: 1px solid var(--line); min-width: 0; }
   .bar { width: 180px; height: 4px; background: var(--raised); border-radius: 2px; overflow: hidden; flex: none; }
   .bar div { height: 100%; background: var(--accent); transition: width 80ms linear; }
   .cur { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 40vw; }
   .small { height: 22px; font-size: 12px; padding: 0 6px; }
   .spacer { flex: 1; }
   .toast { color: var(--text); }
+  .checked { color: var(--accent); }
+  .small.icon { width: 22px; padding: 0; justify-content: center; }
   .link { border: 0; background: none; padding: 0; height: auto; text-decoration: underline; cursor: pointer; }
   .bad { color: var(--bad); }
   .errors { position: fixed; left: 10px; bottom: 36px; width: min(720px, 90vw); max-height: 40vh; display: flex; flex-direction: column; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; box-shadow: var(--shadow); z-index: 30; }

@@ -3,25 +3,25 @@
 @import "@fontsource/ibm-plex-mono/500.css";
 
 :root {
-  --bg: oklch(0.175 0.006 255);
-  --panel: oklch(0.205 0.007 255);
-  --raised: oklch(0.245 0.008 255);
-  --hover: oklch(0.27 0.009 255);
-  --line: oklch(0.3 0.008 255);
-  --line-soft: oklch(0.255 0.007 255);
-  --text: oklch(0.93 0.004 255);
-  --muted: oklch(0.7 0.01 255);
-  --faint: oklch(0.54 0.01 255);
-  --accent: oklch(0.74 0.12 58);
-  --accent-strong: oklch(0.68 0.14 52);
-  --accent-ink: oklch(0.2 0.03 55);
-  --accent-soft: oklch(0.74 0.12 58 / 0.14);
-  --select: oklch(0.74 0.12 58 / 0.2);
+  --bg: oklch(0.175 0 0);
+  --panel: oklch(0.205 0 0);
+  --raised: oklch(0.245 0 0);
+  --hover: oklch(0.27 0 0);
+  --line: oklch(0.3 0 0);
+  --line-soft: oklch(0.255 0 0);
+  --text: oklch(0.93 0 0);
+  --muted: oklch(0.7 0 0);
+  --faint: oklch(0.54 0 0);
+  --accent: oklch(0.7 0.13 250);
+  --accent-strong: oklch(0.64 0.15 252);
+  --accent-ink: oklch(0.16 0.02 250);
+  --accent-soft: oklch(0.7 0.13 250 / 0.16);
+  --select: oklch(0.7 0.13 250 / 0.22);
   --mod: oklch(0.74 0.14 152);
   --mod-soft: oklch(0.74 0.14 152 / 0.14);
   --bad: oklch(0.68 0.17 25);
-  --checker-a: oklch(0.24 0.006 255);
-  --checker-b: oklch(0.2 0.006 255);
+  --checker-a: oklch(0.24 0 0);
+  --checker-b: oklch(0.2 0 0);
   --shadow: 0 8px 28px oklch(0 0 0 / 0.45);
   --radius: 5px;
   --row: 26px;
@@ -31,26 +31,26 @@
 }
 
 :root[data-theme="light"] {
-  --bg: oklch(0.965 0.003 255);
-  --panel: oklch(0.99 0.002 255);
-  --raised: oklch(0.94 0.004 255);
-  --hover: oklch(0.925 0.005 255);
-  --line: oklch(0.86 0.006 255);
-  --line-soft: oklch(0.91 0.005 255);
-  --text: oklch(0.22 0.01 255);
-  --muted: oklch(0.45 0.012 255);
-  --faint: oklch(0.6 0.01 255);
-  --accent: oklch(0.58 0.14 50);
-  --accent-strong: oklch(0.52 0.15 48);
-  --accent-ink: oklch(0.99 0.01 60);
-  --accent-soft: oklch(0.58 0.14 50 / 0.12);
-  --select: oklch(0.58 0.14 50 / 0.16);
+  --bg: oklch(0.965 0 0);
+  --panel: oklch(0.99 0 0);
+  --raised: oklch(0.94 0 0);
+  --hover: oklch(0.925 0 0);
+  --line: oklch(0.86 0 0);
+  --line-soft: oklch(0.91 0 0);
+  --text: oklch(0.22 0 0);
+  --muted: oklch(0.45 0 0);
+  --faint: oklch(0.6 0 0);
+  --accent: oklch(0.55 0.16 255);
+  --accent-strong: oklch(0.49 0.17 257);
+  --accent-ink: oklch(0.99 0 0);
+  --accent-soft: oklch(0.55 0.16 255 / 0.12);
+  --select: oklch(0.55 0.16 255 / 0.16);
   --mod: oklch(0.52 0.14 152);
   --mod-soft: oklch(0.52 0.14 152 / 0.12);
   --bad: oklch(0.55 0.19 25);
-  --checker-a: oklch(0.93 0.003 255);
-  --checker-b: oklch(0.88 0.004 255);
-  --shadow: 0 8px 28px oklch(0.3 0.02 255 / 0.18);
+  --checker-a: oklch(0.93 0 0);
+  --checker-b: oklch(0.88 0 0);
+  --shadow: 0 8px 28px oklch(0.2 0 0 / 0.18);
   color-scheme: light;
 }
 
@@ -118,3 +118,21 @@ label.check { display: inline-flex; align-items: center; gap: 6px; cursor: point
 
 ::selection { background: var(--select); color: var(--text); }
 input, textarea { caret-color: var(--accent); }
+
+/* Kind colours, shared by the sidebar and the table. */
+.dot { width: 7px; height: 7px; border-radius: 2px; flex: none; background: var(--faint); }
+.dot.model { background: oklch(0.74 0.12 65); }
+.dot.texture { background: oklch(0.7 0.11 200); }
+.dot.audio { background: oklch(0.72 0.12 300); }
+.dot.video { background: oklch(0.7 0.13 15); }
+.dot.script, .dot.text { background: oklch(0.75 0.08 130); }
+
+/* Drag handles between panels. */
+.splitter { position: relative; z-index: 5; background: transparent; }
+.splitter::after { content: ""; position: absolute; inset: 0; background: var(--accent); opacity: 0; transition: opacity 120ms; }
+.splitter:hover::after, .splitter.dragging::after { opacity: 0.6; }
+.splitter.v { width: 6px; margin: 0 -3px; cursor: col-resize; }
+.splitter.h { height: 6px; margin: -3px 0; cursor: row-resize; }
+body.resizing { cursor: col-resize; }
+body.resizing-v { cursor: row-resize; }
+body.resizing *, body.resizing-v * { pointer-events: none; }
