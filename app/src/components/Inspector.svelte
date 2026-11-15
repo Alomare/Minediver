@@ -66,7 +66,7 @@
         <Preview {info} {id} />
         <button class="ghost icon grow tip-left" onclick={() => (app.big = true)} aria-label="Large preview" data-tip="Large preview (Enter)"><Maximize2 size={14} /></button>
       </div>
-      <Splitter dir="h" bind:value={app.layout.preview} min={140} max={1400} reset={300} onend={saveLayout} label="Resize the preview" />
+      <Splitter dir="h" bind:value={app.layout.preview} min={140} max={1400} reset={486} onend={saveLayout} label="Resize the preview" />
     {/if}
 
     <div class="meta">

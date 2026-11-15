@@ -139,7 +139,7 @@
       {/if}
       <div class="tablewrap" class:hidden={!!bigInfo}><Table onextract={extractSelected} /></div>
     </main>
-    <Splitter bind:value={app.layout.insp} min={260} max={inspMax} reset={380} invert onend={saveLayout} label="Resize the details panel" />
+    <Splitter bind:value={app.layout.insp} min={260} max={inspMax} reset={550} invert onend={saveLayout} label="Resize the details panel" />
     <div class="insp"><Inspector /></div>
   {:else}
     <section class="start">

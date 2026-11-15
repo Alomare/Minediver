@@ -2,7 +2,7 @@ import { call } from "./api.js";
 
 const LAYOUT_KEY = "minediver.layout";
 function loadLayout() {
-  const base = { side: 240, insp: 380, preview: 300 };
+  const base = { side: 240, insp: 550, preview: 486 };
   try {
     return { ...base, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") };
   } catch {
