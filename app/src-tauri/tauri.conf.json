@@ -34,7 +34,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCMUE1MkJBRTZCRkU1QkYKUldTLzViL211bElhcTVlWG1QWlJ1SmV3d2djMmkwYm9UMlJWSkFRYk1tSHRYSEFnUlZZZkVDVEsK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJCNjkwNTZBQThDQjFDMDAKUldRQUhNdW9hZ1ZwdTUxUXAwQnVSK3granp5MnNWQ2REdGU3OGcrT2E0eFAvVkFySWtSK0VVL1EK",
       "endpoints": ["https://github.com/Alomare/Minediver/releases/latest/download/latest.json"],
       "windows": { "installMode": "passive" }
     }
