@@ -3,6 +3,7 @@
 
 pub mod archive;
 pub mod bundle;
+pub mod category;
 pub mod harvest;
 pub mod hash;
 pub mod unit;

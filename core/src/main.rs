@@ -53,6 +53,8 @@ impl Pick {
 enum Cmd {
     /// Counts resources by type.
     Census,
+    /// Counts resources by kind and category, the index the window shows on the left.
+    Categories,
     /// Lists resources.
     List {
         #[command(flatten)]
@@ -131,6 +133,15 @@ fn main() -> Result<()> {
         names.add_file(n)?;
     }
     match cli.cmd {
+        Cmd::Categories => {
+            let t = std::time::Instant::now();
+            let linker = minediver::links::Linker::new(&ar);
+            let cats = minediver::category::Categories::build(&ar, &names, &linker);
+            eprintln!("categories in {:.2?}", t.elapsed());
+            for (k, c, n) in cats.counts(&ar) {
+                println!("{:10} {c:40} {n:7}", format!("{k:?}"));
+            }
+        }
         Cmd::Census => {
             let mut by: BTreeMap<String, (usize, usize, u64, u64, usize)> = BTreeMap::new();
             for a in ar.assets.iter().filter(|a| a.patch.is_none()) {
