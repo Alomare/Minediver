@@ -12,3 +12,9 @@
 - New: mod builder (experimental): edited models, with or without bones, and edited textures become an Obsidian mod folder. Textures keep the compression of the game texture they replace.
 - New: mod projects can add new models and textures under new names next to the game's, instead of replacing them.
 - New: command line tool, `minediver-cli`, for listing, extracting and building mods.
+- New: categories on the left for every kind (Weapons, Enemies, Helldivers, Vehicles, Stratagems and more), with weapon classes from the game loadout. Textures take the category of the model that uses them.
+- New: check boxes on every row. Ticked rows stay ticked across searches, for one extraction from several searches.
+- New: panels resize by dragging the borders, and the sizes are kept.
+- New: large preview in place of the list, with stepping through the list.
+- New: extract everything shown, filter to one bundle, copy hashes, save the list as a table, sort by category, size filter.
+- New: portable Windows zip that keeps settings next to the program.

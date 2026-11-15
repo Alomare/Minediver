@@ -6,11 +6,11 @@ The game stores every file under a hash instead of a name. Minediver ships the n
 
 ## Install
 
-On Windows, download `Minediver_<version>_x64-setup.exe` from the Releases page and run it. A portable zip (`Minediver-<version>-portable-windows.zip`) holds the same program and the command line tool and needs no install.
+On Windows, download `Minediver_<version>_x64-setup.exe` from the Releases page and run it. A portable zip (`Minediver-<version>-portable-windows.zip`) holds the same program and the command line tool and needs no install: unpack it anywhere. The portable copy keeps settings and cache in a `data` folder next to the program and leaves nothing in the user folders.
 
 On Linux, download the `.AppImage`, mark it executable (`chmod +x Minediver_*.AppImage`) and run it. A `.deb` is there too.
 
-Minediver checks for updates on request (Settings, Check for updates) and installs them in place.
+Minediver checks for updates on request (Settings, Check for updates). The installed copy downloads and installs the update in place; a portable copy links to the new zip instead.
 
 Optional: [ffmpeg](https://ffmpeg.org/download.html) for MP4 videos and MP3 audio. Minediver finds it on the PATH, or set the path in Settings. WAV, OGG, PNG, DDS and GLB need nothing else.
 
@@ -21,14 +21,18 @@ Minediver looks for Helldivers in the Steam libraries. If the game is somewhere 
 ## Finding things
 
 - Type in the search box (Ctrl F) to match names, types or hashes.
-- The chips next to the search box and the list on the left narrow by kind (models, textures, audio and so on). Ctrl click a kind to combine several.
-- Types and Bundles on the left filter further. Patterns take globs such as `equipment/wep_*`.
-- Click a column header to sort. Arrow keys move, Shift extends the selection, Ctrl A selects everything shown.
-- The panel on the right shows the selected file: textures as images, models in 3D (drag to turn, scroll to zoom), sound banks as a list of clips to play. It also lists the parts, material slots and textures of a model.
+- The tree on the left sorts every kind into categories read from the game names: Models, Weapons, Primary; Textures, Enemies, Terminids; and so on. Weapon classes follow the game loadout (primary, sidearm, support weapon). Textures rarely have names, so a texture takes the category of the model that uses it; those fill in a few seconds after the game opens. Ctrl click to combine several categories.
+- Types and Bundles on the left filter further. Patterns take globs such as `equipment/wep_*`, and the size list hides small files.
+- Click a column header to sort. Arrow keys move, Home and End jump.
+- Tick the box of a row to add it to the selection (Space, Ctrl click, or Shift click for a range; the box in the header ticks every row shown). Ticked rows stay ticked when the search or the filters change, so one extraction can collect files from several searches. The status bar counts them and has Clear.
+- The panel on the right shows the focused file: textures as images, models in 3D (drag to turn, scroll to zoom, Reset view), sound banks as a list of clips to play. It also lists the parts, material slots and textures of a model; click a texture to find it in the list.
+- Enter, a double click or the button in the corner of the preview opens a large preview in place of the list. Up and Down step through the list from there, and Esc goes back. Click a texture in the large preview for actual size.
+- Drag the borders between the panels, and between the preview and the details, to resize them. A double click on a border resets it. Sizes are kept for the next start.
+- Right-click a row for more: extract everything shown, show only that bundle, copy names or hashes, or save the list as a tab-separated table.
 
 ## Extracting
 
-Select files and press Extract (Ctrl E). The first time, Minediver asks for an output folder; Ctrl Shift E asks every time. Files keep the folder structure of their game names, and unnamed files go under `_unnamed/<type>/<hash>`.
+Tick files, or focus one, and press Extract (Ctrl E). The first time, Minediver asks for an output folder; Ctrl Shift E asks every time. Files keep the folder structure of their game names, and unnamed files go under `_unnamed/<type>/<hash>`.
 
 Formats (Settings):
 

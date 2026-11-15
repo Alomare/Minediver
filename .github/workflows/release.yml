@@ -62,6 +62,8 @@ jobs:
           cargo build --release -p minediver-core
           mkdir -p portable
           cp target/release/minediver.exe target/release/minediver-cli.exe portable/
+          # portable.txt makes Minediver keep settings and cache in a data folder beside the exe.
+          echo "Settings and cache stay in the data folder next to this file. Without this file, Minediver uses the per-user folders." > portable/portable.txt
           cd portable && 7z a "../Minediver-${GITHUB_REF_NAME#v}-portable-windows.zip" . && cd ..
           gh release upload "$GITHUB_REF_NAME" "Minediver-${GITHUB_REF_NAME#v}-portable-windows.zip" --clobber
       - name: Linux CLI
