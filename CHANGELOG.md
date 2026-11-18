@@ -1,5 +1,9 @@
 # Changelog
 
+## Next
+
+- New: a mod project can list custom weapons (`weapons` in `mod.json`). The build writes a `main.lua` that makes each one through Obsidian API, drawn with a model from the project.
+
 ## 0.1.0
 
 - New: reads every bundle in the game folder and lists the files inside, with names where they are known.

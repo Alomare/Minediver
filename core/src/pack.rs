@@ -10,6 +10,14 @@
 //!     { "type": "unit", "name": "equipment/wep_assaultrifle_01", "file": "rifle.glb" },
 //!     { "type": "texture", "name": "0123456789abcdef", "file": "skin.png" } ] }
 //! ```
+//!
+//! A project may also list custom weapons. The build then writes a `main.lua` that makes each one through
+//! Obsidian API's `api.weapons.define`, usually drawn with a new unit of the same project:
+//!
+//! ```json
+//!   "weapons": [ { "name": "author_breaker", "base": "weapon_assaultrifle", "title": "Breaker",
+//!     "model": "author/breaker", "stats": { "power": 120 }, "unlock": "free" } ]
+//! ```
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -35,6 +43,75 @@ pub struct Project {
     pub description: String,
     #[serde(default)]
     pub replace: Vec<Replace>,
+    /// Custom weapons the mod makes through Obsidian API (`api.weapons.define`). Each is a JSON object
+    /// with the fields that call takes: name, base, title, description, model, icon, stats, attributes,
+    /// unlock.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub weapons: Vec<serde_json::Value>,
+}
+
+/// The Obsidian API version that has `api.weapons`.
+pub const WEAPONS_API: &str = "1.54.0";
+
+/// A JSON value as a Lua literal: keys that are plain names bare, any other key in brackets.
+fn lua_value(v: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match v {
+        Value::Null => "nil".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => lua_string(s),
+        Value::Array(a) => format!("{{ {} }}", a.iter().map(lua_value).collect::<Vec<_>>().join(", ")),
+        Value::Object(o) => {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            let parts: Vec<String> = keys
+                .into_iter()
+                .map(|k| {
+                    let bare = !k.is_empty() && k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') && !k.as_bytes()[0].is_ascii_digit();
+                    let key = if bare { k.clone() } else { format!("[{}]", lua_string(k)) };
+                    format!("{key} = {}", lua_value(&o[k]))
+                })
+                .collect();
+            format!("{{ {} }}", parts.join(", "))
+        }
+    }
+}
+
+/// A Lua string literal: printable ASCII as it is, quotes and backslashes escaped, every other byte as
+/// a decimal escape, so UTF-8 text survives any editor.
+fn lua_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for b in s.bytes() {
+        match b {
+            b'\\' => out.push_str("\\\\"),
+            b'"' => out.push_str("\\\""),
+            0x20..=0x7e => out.push(b as char),
+            _ => out.push_str(&format!("\\{b}")),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The entry script of a mod that makes custom weapons: one `api.weapons.define` per weapon, each
+/// logged when it fails, and nothing at all with an Obsidian API too old to have them.
+pub fn weapons_script(name: &str, weapons: &[serde_json::Value]) -> String {
+    let name = name.replace(['\n', '\r'], " ").replace('"', "'");
+    let mut out = String::new();
+    out.push_str(&format!("-- {name}: made by Minediver. The loader runs this once when the game boots.\n"));
+    out.push_str("local api = obsidian.import(\"obsidian.api\")\n");
+    out.push_str("if not (api and api.weapons and api.weapons.define) then\n");
+    out.push_str(&format!("\tobsidian.log({})\n", lua_string(&format!("{name} needs Obsidian API {WEAPONS_API} or later"))));
+    out.push_str("\treturn\nend\n\nlocal WEAPONS = {\n");
+    for w in weapons {
+        out.push_str(&format!("\t{},\n", lua_value(w)));
+    }
+    out.push_str("}\n\nfor _, def in ipairs(WEAPONS) do\n");
+    out.push_str("\tlocal made, why = api.weapons.define(def)\n");
+    out.push_str("\tif not made then obsidian.log(\"weapon \" .. tostring(def.name) .. \" not made: \" .. tostring(why)) end\n");
+    out.push_str("end\n");
+    out
 }
 
 fn default_version() -> String {
@@ -180,7 +257,7 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
             resources.push(json!({ "type": ty_field, "name": name_field, "bundle": format!("{b:016x}"), "data": leaf }));
         }
     }
-    let manifest = json!({
+    let mut manifest = json!({
         "obsidian": 1,
         "id": p.id,
         "version": p.version,
@@ -190,6 +267,19 @@ pub fn build(ar: &Archive, names: &NameDb, project_dir: &Path, out: &Path) -> Re
         "scope": "client",
         "resources": resources,
     });
+    if p.weapons.is_empty() {
+        let _ = std::fs::remove_file(out.join("main.lua"));
+    } else {
+        for w in &p.weapons {
+            ensure!(w.get("name").and_then(|v| v.as_str()).is_some() && w.get("base").and_then(|v| v.as_str()).is_some(), "each weapon needs a name and a base");
+        }
+        std::fs::write(out.join("main.lua"), weapons_script(&p.name, &p.weapons))?;
+        // A custom weapon has its own numbers, which the other players' games play against: a session mod.
+        manifest["scope"] = json!("session");
+        manifest["entry"] = json!("main.lua");
+        manifest["requires"] = json!(["obsidian.api"]);
+        notes.push(format!("main.lua makes {} custom weapon(s) and needs Obsidian API {WEAPONS_API}", p.weapons.len()));
+    }
     let text = serde_json::to_string_pretty(&manifest)?;
     std::fs::write(out.join("obsidian.json"), text + "\n")?;
     Ok(Report { out: out.display().to_string(), resources: manifest["resources"].as_array().map_or(0, |a| a.len()), notes })
@@ -653,7 +743,7 @@ pub fn start(ex: &crate::export::Exporter, assets: &[&Asset], dir: &Path, id: &s
     std::fs::create_dir_all(dir)?;
     let mut p = match std::fs::read_to_string(dir.join("mod.json")) {
         Ok(t) => serde_json::from_str(&t)?,
-        Err(_) => Project { id: id.into(), name: name.into(), version: default_version(), authors: vec![], description: String::new(), replace: vec![] },
+        Err(_) => Project { id: id.into(), name: name.into(), version: default_version(), authors: vec![], description: String::new(), replace: vec![], weapons: vec![] },
     };
     let add = |p: &mut Project, ty: &str, name: String, file: String| {
         let (name, base) = match new_prefix {
@@ -698,6 +788,31 @@ pub fn start(ex: &crate::export::Exporter, assets: &[&Asset], dir: &Path, id: &s
     }
     std::fs::write(dir.join("mod.json"), serde_json::to_string_pretty(&p)? + "\n")?;
     Ok(p)
+}
+
+#[cfg(test)]
+mod weapon_tests {
+    use super::*;
+
+    #[test]
+    fn a_weapon_becomes_a_define_call_with_its_fields_as_lua() {
+        let w = json!({ "name": "me_breaker", "base": "weapon_assaultrifle", "title": { "en": "Breaker", "pt-BR": "Quebra" },
+            "model": "me/breaker", "stats": { "power": 120, "magazine_capacity": 12 }, "unlock": "free" });
+        let lua = weapons_script("My \"pack\"", &[w]);
+        assert!(lua.starts_with("-- My 'pack': made by Minediver"), "{lua}");
+        assert!(lua.contains("local api = obsidian.import(\"obsidian.api\")"));
+        assert!(lua.contains("name = \"me_breaker\""), "{lua}");
+        assert!(lua.contains("stats = { magazine_capacity = 12, power = 120 }"), "{lua}");
+        assert!(lua.contains("[\"pt-BR\"] = \"Quebra\""), "{lua}");
+        assert!(lua.contains("api.weapons.define(def)"));
+    }
+
+    #[test]
+    fn lua_strings_escape_what_lua_needs() {
+        assert_eq!(lua_string("a\\b\"c\nd"), "\"a\\\\b\\\"c\\10d\"");
+        assert_eq!(lua_string("caf\u{e9}"), "\"caf\\195\\169\"");
+        assert_eq!(lua_value(&json!([1, true, null])), "{ 1, true, nil }");
+    }
 }
 
 #[cfg(test)]
